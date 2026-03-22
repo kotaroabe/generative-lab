@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GIRAGIRA Generative Lab</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.3/p5.min.js"></script>
+</head>
+<body>
+  <aside class="panel" id="panel">
+    <h1>GIRAGIRA Generative Lab</h1>
+    <p class="lede">Type text, tune parameters, export PNG. Mosaic grid from typographic sampling.</p>
+
+    <div class="control-group">
+      <h2>Typography</h2>
+      <p class="group-hint">What gets rasterized into the grid</p>
+      <label>Text</label>
+      <input type="text" id="inpText" value="giragira" maxlength="32" />
+
+      <label>Font</label>
+      <select id="inpFontFamily">
+        <option value="serif">Serif</option>
+        <option value="sans">Sans-serif</option>
+        <option value="gothic">Gothic</option>
+      </select>
+
+      <label>Font size (vs auto) <span id="valFontScale"></span>%</label>
+      <input type="range" id="inpFontScale" min="20" max="200" value="100" />
+
+      <label>Background</label>
+      <input type="color" id="inpMosaicBg" value="#ebe6df" />
+
+      <label>Text (letter) color</label>
+      <input type="color" id="inpMosaicInk" value="#121212" />
+    </div>
+
+    <div class="control-group">
+      <h2>Canvas</h2>
+      <p class="group-hint">Export dimensions</p>
+      <label>Size (px) — width × height</label>
+      <div class="row row-dims">
+        <input type="number" id="inpCanvasW" value="880" min="200" max="4096" step="1" />
+        <span class="dim-sep">×</span>
+        <input type="number" id="inpCanvasH" value="880" min="200" max="4096" step="1" />
+      </div>
+    </div>
+
+    <div class="control-group">
+      <h2>Grid layout</h2>
+      <p class="group-hint">One count for both axes — always square tiles</p>
+      <label>Grid resolution <span id="valGridN"></span></label>
+      <input type="range" id="inpGridN" min="4" max="120" value="52" step="1" />
+
+      <label>Padding <span id="valPad"></span>px</label>
+      <input type="range" id="inpPad" min="8" max="120" value="16" />
+
+      <label>Sampling detail <span id="valSamplingDetail"></span> px/tile</label>
+      <input type="range" id="inpSamplingDetail" min="2" max="12" value="4" step="1" />
+    </div>
+
+    <div class="control-group">
+      <h2>Mosaic look</h2>
+      <p class="group-hint">Edges and texture</p>
+      <label>Gutter <span id="valGutter"></span>px</label>
+      <input type="range" id="inpGutter" min="0" max="6" value="1" />
+
+      <label>Edge softness <span id="valEdge"></span></label>
+      <input type="range" id="inpEdge" min="0" max="100" value="65" />
+
+      <label>Grain / texture <span id="valGrain"></span></label>
+      <input type="range" id="inpGrain" min="0" max="100" value="40" />
+
+      <label class="inline-check">
+        <input type="checkbox" id="inpAnimateTexture" />
+        <span>Animate texture</span>
+      </label>
+      <label>Animation speed <span id="valAnimSpeed"></span></label>
+      <input type="range" id="inpAnimSpeed" min="5" max="100" value="40" />
+
+      <label class="inline-check">
+        <input type="checkbox" id="inpDetailDrift" />
+        <span>Animate sampling detail</span>
+      </label>
+      <label>Detail drift pace <span id="valDetailPace"></span></label>
+      <input type="range" id="inpDetailPace" min="5" max="100" value="35" />
+      <p class="field-note">Wanders around the slider value using noise; higher pace = faster changes.</p>
+
+      <label>Tone spread <span id="valSpread"></span></label>
+      <input type="range" id="inpSpread" min="0" max="100" value="35" />
+
+      <label>Fill threshold <span id="valThresh"></span></label>
+      <input type="range" id="inpThresh" min="0" max="100" value="42" />
+    </div>
+
+    <div class="control-group">
+      <h2>Seed &amp; export</h2>
+      <p class="group-hint">Randomness and saving</p>
+      <label>Seed</label>
+      <div class="row">
+        <input type="number" id="inpSeed" value="2025" />
+        <button type="button" id="btnRandomSeed">Random seed</button>
+      </div>
+
+      <div class="actions">
+        <button type="button" id="btnRedraw">Redraw</button>
+        <button type="button" id="btnExport" class="primary">Export PNG</button>
+      </div>
+    </div>
+  </aside>
+
+  <main id="canvasHost"></main>
+
+  <script src="sketch.js"></script>
+</body>
+</html>
