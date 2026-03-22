@@ -4,11 +4,11 @@
   --muted: #5c5a56;
   --line: #d8d4cc;
   --accent: #c45c26;
+  --panel-w: 280px;
+  --mobile-bar-h: 48px;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 html, body {
   margin: 0;
@@ -17,51 +17,109 @@ html, body {
   font-size: 14px;
   color: var(--ink);
   background: var(--bg);
+  overscroll-behavior: none;
 }
 
+/* ─── Desktop: sidebar left, canvas right ─────────────────── */
 body {
   display: flex;
   min-height: 100%;
 }
 
 .panel {
-  width: 300px;
+  width: var(--panel-w);
   flex-shrink: 0;
-  padding: 20px 20px 28px;
+  display: flex;
+  flex-direction: column;
   border-right: 1px solid var(--line);
-  overflow-y: auto;
   max-height: 100vh;
+  overflow: hidden;
 }
 
-.panel h1 {
-  font-size: 1.15rem;
+.panel-header {
+  flex-shrink: 0;
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-header h1 {
+  font-size: 1.1rem;
   font-weight: 600;
   letter-spacing: -0.02em;
-  margin: 0 0 8px;
+  margin: 0 0 4px;
 }
 
-.panel h2 {
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
+.lede {
+  font-size: 0.75rem;
+  line-height: 1.45;
   color: var(--muted);
-  margin: 18px 0 10px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
+  margin: 0;
 }
 
-.panel h2:first-of-type {
-  border-top: none;
-  padding-top: 0;
+/* The scrollable area of the panel */
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 20px 32px;
+  -webkit-overflow-scrolling: touch;
 }
 
+/* Mobile toggle button (hidden on desktop) */
+.btn-panel-toggle {
+  display: none;
+}
+
+/* ─── Control groups ──────────────────────────────────────── */
 .control-group {
   padding-bottom: 2px;
 }
 
 .control-group + .control-group {
   margin-top: 2px;
+}
+
+.control-group h2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin: 16px 0 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.control-group h2 .chevron {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+  opacity: 0.5;
+}
+
+.control-group.is-collapsed h2 .chevron {
+  transform: rotate(-90deg);
+}
+
+.control-group-body {
+  overflow: hidden;
+  transition: opacity 0.15s ease;
+}
+
+.control-group.is-collapsed .control-group-body {
+  display: none;
+}
+
+.control-group:first-child h2 {
+  border-top: none;
+  padding-top: 6px;
+  margin-top: 8px;
 }
 
 .group-hint {
@@ -80,13 +138,7 @@ body {
   opacity: 0.9;
 }
 
-.lede {
-  font-size: 0.8rem;
-  line-height: 1.45;
-  color: var(--muted);
-  margin: 0 0 16px;
-}
-
+/* ─── Labels & inputs ─────────────────────────────────────── */
 label {
   display: block;
   font-size: 0.72rem;
@@ -110,6 +162,10 @@ select {
 input[type="range"] {
   width: 100%;
   accent-color: var(--accent);
+  cursor: pointer;
+  /* larger hit area */
+  padding: 8px 0;
+  height: 34px;
 }
 
 input[type="color"] {
@@ -128,13 +184,9 @@ input[type="color"] {
   align-items: center;
 }
 
-.row input[type="number"] {
-  flex: 1;
-}
+.row input[type="number"] { flex: 1; }
 
-.row-dims {
-  align-items: center;
-}
+.row-dims { align-items: center; }
 
 .dim-sep {
   flex-shrink: 0;
@@ -143,39 +195,20 @@ input[type="color"] {
   padding: 0 2px;
 }
 
-.inline-check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-  cursor: pointer;
-}
-
-.inline-check input {
-  width: auto;
-  margin: 0;
-  accent-color: var(--accent);
-}
-
-.inline-check span {
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--ink);
-}
-
 button {
   font: inherit;
-  padding: 8px 12px;
+  padding: 9px 12px;
   border-radius: 6px;
   border: 1px solid var(--line);
   background: #fff;
   color: var(--ink);
   cursor: pointer;
+  min-height: 40px;
 }
 
-button:hover {
-  background: #faf9f7;
-}
+button:hover { background: #faf9f7; }
+
+button:active { opacity: 0.8; }
 
 button.primary {
   background: var(--ink);
@@ -183,9 +216,7 @@ button.primary {
   border-color: var(--ink);
 }
 
-button.primary:hover {
-  opacity: 0.92;
-}
+button.primary:hover { opacity: 0.88; }
 
 .actions {
   display: flex;
@@ -194,6 +225,7 @@ button.primary:hover {
   margin-top: 20px;
 }
 
+/* ─── Canvas host ─────────────────────────────────────────── */
 #canvasHost {
   flex: 1;
   display: flex;
@@ -201,11 +233,160 @@ button.primary:hover {
   justify-content: center;
   padding: 24px;
   min-width: 0;
+  min-height: 0;
 }
 
 #canvasHost canvas {
   max-width: 100%;
+  max-height: 100%;
   height: auto;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
   border-radius: 4px;
+  display: block;
+}
+
+
+/* ─── Mobile layout ───────────────────────────────────────── */
+@media (max-width: 719px) {
+
+  body {
+    flex-direction: column;
+    height: 100dvh;
+    height: 100vh; /* fallback */
+    overflow: hidden;
+  }
+
+  /* Sticky top bar on mobile */
+  .mobile-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    height: var(--mobile-bar-h);
+    padding: 0 16px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+    z-index: 10;
+  }
+
+  .mobile-bar-title {
+    font-size: 0.92rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .mobile-bar-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .mobile-bar button {
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    min-height: 36px;
+  }
+
+  /* Canvas fills remaining space above the panel */
+  #canvasHost {
+    flex: 1;
+    padding: 12px;
+    min-height: 0;
+  }
+
+  /* Panel becomes a bottom sheet */
+  .panel {
+    width: 100%;
+    max-height: 52vh;
+    border-right: none;
+    border-top: 1px solid var(--line);
+    flex-shrink: 0;
+    position: relative;
+    transition: max-height 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .panel.is-expanded {
+    max-height: 82vh;
+  }
+
+  /* Show the drag handle */
+  .panel-handle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    cursor: pointer;
+    flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .panel-handle::before {
+    content: "";
+    display: block;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--line);
+  }
+
+  /* Hide desktop panel header on mobile — use mobile-bar instead */
+  .panel-header {
+    display: none;
+  }
+
+  .panel-body {
+    padding: 0 16px 24px;
+  }
+
+  /* ---- Touch sizing ---- */
+  input[type="range"] {
+    height: 40px;
+    padding: 10px 0;
+  }
+
+  input[type="text"],
+  input[type="number"],
+  select {
+    padding: 11px 12px;
+    font-size: 1rem;
+  }
+
+  input[type="color"] {
+    height: 44px;
+  }
+
+  label {
+    font-size: 0.78rem;
+    margin: 12px 0 5px;
+  }
+
+  button {
+    min-height: 44px;
+    padding: 10px 14px;
+    font-size: 0.88rem;
+  }
+
+  .group-hint {
+    font-size: 0.72rem;
+  }
+
+  /* Control groups: start collapsed on mobile to reduce scrolling */
+  .control-group.mobile-collapsed .control-group-body {
+    display: none;
+  }
+
+  .control-group h2 {
+    padding: 10px 0;
+    margin: 0;
+    font-size: 0.72rem;
+  }
+
+  .control-group:first-child h2 {
+    padding-top: 6px;
+  }
+}
+
+/* Desktop: hide mobile-only elements */
+@media (min-width: 720px) {
+  .mobile-bar { display: none; }
+  .panel-handle { display: none; }
 }

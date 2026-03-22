@@ -8,104 +8,149 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.3/p5.min.js"></script>
 </head>
 <body>
-  <aside class="panel" id="panel">
-    <h1>GIRAGIRA Generative Lab</h1>
-    <p class="lede">Type text, tune parameters, export PNG. Mosaic grid from typographic sampling.</p>
 
-    <div class="control-group">
-      <h2>Typography</h2>
-      <p class="group-hint">Text and typeface rasterized into the grid</p>
-      <label>Text</label>
-      <input type="text" id="inpText" value="giragira" maxlength="32" />
-
-      <label>Font</label>
-      <select id="inpFontFamily">
-        <option value="serif">Serif</option>
-        <option value="sans">Sans-serif</option>
-        <option value="gothic">Gothic</option>
-      </select>
-
-      <label>Font size (vs auto) <span id="valFontScale"></span>%</label>
-      <input type="range" id="inpFontScale" min="20" max="200" value="100" />
-
-      <label>Background</label>
-      <input type="color" id="inpMosaicBg" value="#ebe6df" />
-
-      <label>Text (letter) color</label>
-      <input type="color" id="inpMosaicInk" value="#121212" />
+  <!-- Mobile-only top bar -->
+  <div class="mobile-bar">
+    <span class="mobile-bar-title">GIRAGIRA</span>
+    <div class="mobile-bar-actions">
+      <button type="button" id="btnRedrawMobile">Redraw</button>
+      <button type="button" id="btnExportMobile" class="primary">Export PNG</button>
     </div>
-
-    <div class="control-group">
-      <h2>Canvas</h2>
-      <p class="group-hint">Export dimensions</p>
-      <label>Size (px) — width × height</label>
-      <div class="row row-dims">
-        <input type="number" id="inpCanvasW" value="880" min="200" max="4096" step="1" />
-        <span class="dim-sep">×</span>
-        <input type="number" id="inpCanvasH" value="880" min="200" max="4096" step="1" />
-      </div>
-    </div>
-
-    <div class="control-group">
-      <h2>Grid layout</h2>
-      <p class="group-hint">Tile count and rasterization quality</p>
-      <label>Grid resolution <span id="valGridN"></span></label>
-      <input type="range" id="inpGridN" min="4" max="120" value="52" step="1" />
-
-      <label>Cell shape</label>
-      <select id="inpCellShape">
-        <option value="square">1 : 1 — Square</option>
-        <option value="tall">1 : 2 — Tall rectangle</option>
-        <option value="wide">2 : 1 — Wide rectangle</option>
-      </select>
-      <p class="field-note">Tall/wide tiles sit inside each cell; ink is boosted to match visual weight. Grid resolution is the number of columns — rows auto-adjust to match canvas proportions.</p>
-
-      <label>Padding <span id="valPad"></span>px</label>
-      <input type="range" id="inpPad" min="0" max="120" value="16" />
-
-      <label>Sampling detail <span id="valSamplingDetail"></span> px/tile</label>
-      <input type="range" id="inpSamplingDetail" min="2" max="12" value="6" step="1" />
-    </div>
-
-    <div class="control-group">
-      <h2>Mosaic look</h2>
-      <p class="group-hint">Tile edges, texture, and tonal variation</p>
-      <label>Gutter <span id="valGutter"></span>px</label>
-      <input type="range" id="inpGutter" min="0" max="6" value="1" />
-
-      <label>Edge softness <span id="valEdge"></span></label>
-      <input type="range" id="inpEdge" min="0" max="100" value="65" />
-
-      <label>Scratch density <span id="valGrain"></span></label>
-      <input type="range" id="inpGrain" min="0" max="100" value="55" />
-
-      <label>Tone spread <span id="valSpread"></span></label>
-      <input type="range" id="inpSpread" min="0" max="100" value="35" />
-
-      <label>Contrast <span id="valContrast"></span></label>
-      <input type="range" id="inpContrast" min="0" max="100" value="0" />
-
-      <label>Fill threshold <span id="valThresh"></span></label>
-      <input type="range" id="inpThresh" min="0" max="100" value="42" />
-    </div>
-
-    <div class="control-group">
-      <h2>Seed &amp; export</h2>
-      <p class="group-hint">Randomness and saving</p>
-      <label>Seed</label>
-      <div class="row">
-        <input type="number" id="inpSeed" value="2025" />
-        <button type="button" id="btnRandomSeed">Random seed</button>
-      </div>
-
-      <div class="actions">
-        <button type="button" id="btnRedraw">Redraw</button>
-        <button type="button" id="btnExport" class="primary">Export PNG</button>
-      </div>
-    </div>
-  </aside>
+  </div>
 
   <main id="canvasHost"></main>
+
+  <aside class="panel" id="panel">
+    <!-- Mobile: drag handle to expand/collapse panel -->
+    <div class="panel-handle" id="panelHandle" role="button" aria-label="Toggle settings panel"></div>
+
+    <!-- Desktop: panel header -->
+    <div class="panel-header">
+      <h1>GIRAGIRA Generative Lab</h1>
+      <p class="lede">Type text, tune parameters, export PNG.</p>
+    </div>
+
+    <div class="panel-body">
+
+      <div class="control-group">
+        <h2>
+          Typography
+          <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
+        </h2>
+        <div class="control-group-body">
+          <p class="group-hint">Text and typeface rasterized into the grid</p>
+          <label>Text</label>
+          <input type="text" id="inpText" value="giragira" maxlength="32" />
+
+          <label>Font</label>
+          <select id="inpFontFamily">
+            <option value="serif">Serif</option>
+            <option value="sans">Sans-serif</option>
+            <option value="gothic">Gothic</option>
+          </select>
+
+          <label>Font size (vs auto) <span id="valFontScale"></span>%</label>
+          <input type="range" id="inpFontScale" min="20" max="200" value="100" />
+
+          <label>Background</label>
+          <input type="color" id="inpMosaicBg" value="#ebe6df" />
+
+          <label>Text (letter) color</label>
+          <input type="color" id="inpMosaicInk" value="#121212" />
+        </div>
+      </div>
+
+      <div class="control-group">
+        <h2>
+          Canvas
+          <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
+        </h2>
+        <div class="control-group-body">
+          <p class="group-hint">Export dimensions (preview scales to fit)</p>
+          <label>Size (px) — width × height</label>
+          <div class="row row-dims">
+            <input type="number" id="inpCanvasW" value="880" min="200" max="4096" step="1" />
+            <span class="dim-sep">×</span>
+            <input type="number" id="inpCanvasH" value="880" min="200" max="4096" step="1" />
+          </div>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <h2>
+          Grid layout
+          <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
+        </h2>
+        <div class="control-group-body">
+          <p class="group-hint">Tile count and rasterization quality</p>
+          <label>Grid resolution <span id="valGridN"></span></label>
+          <input type="range" id="inpGridN" min="4" max="120" value="52" step="1" />
+
+          <label>Cell shape</label>
+          <select id="inpCellShape">
+            <option value="square">1 : 1 — Square</option>
+            <option value="tall">1 : 2 — Tall rectangle</option>
+            <option value="wide">2 : 1 — Wide rectangle</option>
+          </select>
+          <p class="field-note">Tall/wide tiles sit inside each cell; ink is boosted to match visual weight. Grid resolution is the number of columns — rows auto-adjust to match canvas proportions.</p>
+
+          <label>Padding <span id="valPad"></span>px</label>
+          <input type="range" id="inpPad" min="0" max="120" value="16" />
+
+          <label>Sampling detail <span id="valSamplingDetail"></span> px/tile</label>
+          <input type="range" id="inpSamplingDetail" min="2" max="12" value="6" step="1" />
+        </div>
+      </div>
+
+      <div class="control-group">
+        <h2>
+          Mosaic look
+          <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
+        </h2>
+        <div class="control-group-body">
+          <p class="group-hint">Tile edges, texture, and tonal variation</p>
+          <label>Gutter <span id="valGutter"></span>px</label>
+          <input type="range" id="inpGutter" min="0" max="6" value="1" />
+
+          <label>Edge softness <span id="valEdge"></span></label>
+          <input type="range" id="inpEdge" min="0" max="100" value="65" />
+
+          <label>Scratch density <span id="valGrain"></span></label>
+          <input type="range" id="inpGrain" min="0" max="100" value="55" />
+
+          <label>Tone spread <span id="valSpread"></span></label>
+          <input type="range" id="inpSpread" min="0" max="100" value="35" />
+
+          <label>Contrast <span id="valContrast"></span></label>
+          <input type="range" id="inpContrast" min="0" max="100" value="0" />
+
+          <label>Fill threshold <span id="valThresh"></span></label>
+          <input type="range" id="inpThresh" min="0" max="100" value="42" />
+        </div>
+      </div>
+
+      <div class="control-group">
+        <h2>
+          Seed &amp; export
+          <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
+        </h2>
+        <div class="control-group-body">
+          <p class="group-hint">Randomness and saving</p>
+          <label>Seed</label>
+          <div class="row">
+            <input type="number" id="inpSeed" value="2025" />
+            <button type="button" id="btnRandomSeed">Random seed</button>
+          </div>
+
+          <div class="actions">
+            <button type="button" id="btnRedraw">Redraw</button>
+            <button type="button" id="btnExport" class="primary">Export PNG</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /.panel-body -->
+  </aside>
 
   <script src="sketch.js"></script>
 </body>

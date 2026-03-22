@@ -189,6 +189,39 @@ function bindControls() {
   document.getElementById("btnExport").addEventListener("click", () => {
     saveCanvas("generative-font-" + Date.now(), "png");
   });
+
+  // Mobile toolbar duplicates
+  const btnRM = document.getElementById("btnRedrawMobile");
+  const btnEM = document.getElementById("btnExportMobile");
+  if (btnRM) btnRM.addEventListener("click", () => regenerate());
+  if (btnEM) btnEM.addEventListener("click", () => saveCanvas("generative-font-" + Date.now(), "png"));
+
+  // ── Accordion: click h2 to collapse / expand a control group ──
+  document.querySelectorAll(".control-group h2").forEach((h2) => {
+    h2.addEventListener("click", () => {
+      h2.closest(".control-group").classList.toggle("is-collapsed");
+    });
+  });
+
+  // ── Mobile panel: drag handle expands / collapses the sheet ──
+  const panel = document.getElementById("panel");
+  const handle = document.getElementById("panelHandle");
+  if (handle && panel) {
+    handle.addEventListener("click", () => {
+      panel.classList.toggle("is-expanded");
+    });
+  }
+
+  // ── On mobile, start with most groups collapsed to save space ──
+  function applyMobileDefaults() {
+    if (window.innerWidth >= 720) return;
+    // Keep Typography open (first group), collapse the rest
+    const groups = document.querySelectorAll(".control-group");
+    groups.forEach((g, i) => {
+      if (i > 0) g.classList.add("is-collapsed");
+    });
+  }
+  applyMobileDefaults();
 }
 
 function regenerate() {
