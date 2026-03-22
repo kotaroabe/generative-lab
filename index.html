@@ -58,9 +58,10 @@
         <option value="tall">1 : 2 — Tall rectangle</option>
         <option value="wide">2 : 1 — Wide rectangle</option>
       </select>
+      <p class="field-note">Tall/wide tiles sit inside each cell; ink is boosted to match visual weight. Grid resolution is the number of columns — rows auto-adjust to match canvas proportions.</p>
 
       <label>Padding <span id="valPad"></span>px</label>
-      <input type="range" id="inpPad" min="8" max="120" value="16" />
+      <input type="range" id="inpPad" min="0" max="120" value="16" />
 
       <label>Sampling detail <span id="valSamplingDetail"></span> px/tile</label>
       <input type="range" id="inpSamplingDetail" min="2" max="12" value="6" step="1" />
@@ -80,6 +81,9 @@
 
       <label>Tone spread <span id="valSpread"></span></label>
       <input type="range" id="inpSpread" min="0" max="100" value="35" />
+
+      <label>Contrast <span id="valContrast"></span></label>
+      <input type="range" id="inpContrast" min="0" max="100" value="0" />
 
       <label>Fill threshold <span id="valThresh"></span></label>
       <input type="range" id="inpThresh" min="0" max="100" value="42" />

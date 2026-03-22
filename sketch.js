@@ -91,16 +91,21 @@ function readParams() {
   const num = (id) => Number(g(id).value);
   const val = (id) => g(id).value;
   const n = constrain(max(1, Math.round(num("inpGridN")) || 1), 1, 256);
+  const pad = constrain(Math.round(num("inpPad")) || 0, 0, 500);
+  const innerW = max(1, width - 2 * pad);
+  const innerH = max(1, height - 2 * pad);
+  const rows = max(1, Math.round(n * innerH / innerW));
   return {
     text: val("inpText") || "a",
     cols: n,
-    rows: n,
+    rows,
     cellShape: val("inpCellShape") || "square",
-    pad: num("inpPad"),
+    pad,
     gutter: num("inpGutter"),
     edge: num("inpEdge") / 100,
     grain: num("inpGrain") / 100,
     spread: num("inpSpread") / 100,
+    contrast: constrain(num("inpContrast") / 100, 0, 1),
     thresh: num("inpThresh") / 100,
     mosaicBgHex: val("inpMosaicBg"),
     mosaicInkHex: val("inpMosaicInk"),
@@ -123,6 +128,7 @@ function syncLabels() {
   set("valEdge", Math.round(p.edge * 100));
   set("valGrain", Math.round(p.grain * 100));
   set("valSpread", Math.round(p.spread * 100));
+  set("valContrast", Math.round(p.contrast * 100));
   set("valThresh", Math.round(p.thresh * 100));
   set("valFontScale", Math.round(p.fontScale * 100));
   set("valSamplingDetail", p.samplingDetail);
@@ -143,6 +149,7 @@ function bindControls() {
     "inpEdge",
     "inpGrain",
     "inpSpread",
+    "inpContrast",
     "inpThresh",
     "inpSeed",
   ];
@@ -301,54 +308,82 @@ function neighborEdge(grid, i, j, cols, rows) {
 }
 
 /**
- * Returns { cellW, cellH, ox, oy } for the current cell shape.
- * The grid always fits inside GRID_VIEW_FRAC of the shorter canvas side.
- * - square  1:1 → N×N tiles, square
- * - tall    1:2 → N×N tiles, each twice as tall as wide
- * - wide    2:1 → N×N tiles, each twice as wide as tall
+ * Square cells filling the full padded frame.
+ * slot = innerW / cols — cells are square because rows = round(cols × innerH/innerW).
+ * Any rounding remainder is absorbed by the oy centering offset.
  */
-const GRID_VIEW_FRAC = 0.84;
-
 function cellLayout(p) {
-  const innerW = width - 2 * p.pad;
-  const innerH = height - 2 * p.pad;
-  const maxSide = min(innerW, innerH) * GRID_VIEW_FRAC;
-  const N = p.cols;
-  let cellW, cellH;
-  if (p.cellShape === "wide") {
-    // each tile 2:1 — scale so total width still fits maxSide
-    const base = maxSide / (N * 2);
-    cellW = base * 2;
-    cellH = base;
-  } else if (p.cellShape === "tall") {
-    // each tile 1:2 — scale so total height still fits maxSide
-    const base = maxSide / (N * 2);
-    cellW = base;
-    cellH = base * 2;
+  const pad = max(0, p.pad);
+  const innerW = max(1, width - 2 * pad);
+  const innerH = max(1, height - 2 * pad);
+  const slot = p.cols > 0 ? innerW / p.cols : 1;
+  const gridW = p.cols * slot;
+  const gridH = p.rows * slot;
+  const ox = pad + (innerW - gridW) / 2;
+  const oy = pad + (innerH - gridH) / 2;
+  return { slotW: slot, slotH: slot, ox, oy };
+}
+
+/**
+ * Largest axis-aligned rect of the chosen aspect inside the drawable slot
+ * (slotW−g)×(slotH−g), centered. Returns fillFrac = drawn area / inner slot area for tone match.
+ */
+function tileRectInSlot(sx, sy, slotW, slotH, gutter, shape) {
+  const g = max(0, gutter);
+  const iw = max(0.5, slotW - g);
+  const ih = max(0.5, slotH - g);
+  const ix = sx + g / 2;
+  const iy = sy + g / 2;
+  let tw, th;
+  if (shape === "wide") {
+    const scale = min(iw / 2, ih);
+    tw = 2 * scale;
+    th = scale;
+  } else if (shape === "tall") {
+    const scale = min(iw, ih / 2);
+    tw = scale;
+    th = 2 * scale;
   } else {
-    // square 1:1
-    const base = maxSide / N;
-    cellW = cellH = base;
+    tw = iw;
+    th = ih;
   }
-  const gridW = N * cellW;
-  const gridH = N * cellH;
-  const ox = (width - gridW) / 2;
-  const oy = (height - gridH) / 2;
-  return { cellW, cellH, ox, oy };
+  const px = ix + (iw - tw) / 2;
+  const py = iy + (ih - th) / 2;
+  const fillFrac = (tw * th) / (iw * ih);
+  return { px, py, tw, th, fillFrac };
+}
+
+/**
+ * Tall/wide tiles only cover half the slot; the rest shows paper, so the cell reads lighter.
+ * Boost ink level so slot-average luminance matches a full square at the same sample level:
+ *   (1-f)*paper + f*lerp(paper,ink,L') ≈ lerp(paper,ink,L)  →  L' = L/f (clamped).
+ */
+function levelMatchedToSquareFill(level, fillFrac) {
+  if (fillFrac >= 0.999) return level;
+  return constrain(level / fillFrac, 0, 1);
+}
+
+/** Push tones away from mid-gray; contrast01 0 = off, 1 = strong. */
+function applyToneContrast(t, contrast01) {
+  if (contrast01 < 0.001) return t;
+  const k = 1 + contrast01 * 2.35;
+  return constrain((t - 0.5) * k + 0.5, 0, 1);
 }
 
 /**
  * Draw scratch marks inside one tile — horizontal-ish lines that mimic
  * relief print / woodblock texture, keyed on tile ink level.
  */
-function drawScratchCell(px, py, tw, th, ink, grainAmt, paper, inkCol) {
+function drawScratchCell(px, py, tw, th, ink, grainAmt, paper, inkCol, scratchCountMult) {
   if (grainAmt < 0.02) return;
-  const count = floor(3 + grainAmt * 22);
+  const span = max(tw, th);
+  const mult = scratchCountMult >= 0.5 ? scratchCountMult : 1;
+  const count = floor((3 + grainAmt * 22) * mult);
   for (let k = 0; k < count; k++) {
     const ry = py + random() * th;
     // start slightly outside tile edge so scratches can bleed to edge
     const rx = px - tw * 0.05 + random() * tw * 1.1;
-    const len = tw * (0.25 + random() * 0.85);
+    const len = span * (0.25 + random() * 0.85);
     const angle = (random() - 0.5) * 0.28;   // ≈ ±16° tilt in radians
     const sw = 0.3 + random() * 1.15;
     const alpha = grainAmt * 58 * (0.12 + random() * 0.88);
@@ -381,12 +416,16 @@ function drawScene(p) {
   if (!inkGrid) return;
   const cols = p.cols;
   const rows = p.rows;
-  const { cellW, cellH, ox, oy } = cellLayout(p);
+  const { slotW, slotH, ox, oy } = cellLayout(p);
+  const g = max(0, p.gutter);
 
   background(p.mosaicBgHex);
   const paper = color(p.mosaicBgHex);
   const inkC  = color(p.mosaicInkHex);
   const hi    = lerpColor(paper, inkC, 0.38);
+  const { fillFrac } = tileRectInSlot(0, 0, slotW, slotH, g, p.cellShape);
+  /** ~constant scratch strokes per unit tile area (tall/wide insets cover less of the slot). */
+  const scratchMult = fillFrac < 0.999 ? 1 / sqrt(fillFrac) : 1;
 
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
@@ -401,20 +440,20 @@ function drawScene(p) {
         (noise(i * 0.35 + p.seed * 0.01, j * 0.35, p.seed * 0.02) - 0.5) * p.spread;
       const randJitter = (random() - 0.5) * p.spread * 0.35;
       level = constrain(level + noiseShift + randJitter, 0, 1);
+      let levelDraw = levelMatchedToSquareFill(level, fillFrac);
+      levelDraw = applyToneContrast(levelDraw, p.contrast);
 
-      const base = lerpColor(paper, inkC, level);
+      const base = lerpColor(paper, inkC, levelDraw);
       const tileColor = lerpColor(base, hi, edge * p.edge * 0.4);
-      const g = max(0, p.gutter);
-      const tw = max(0.5, cellW - g);
-      const th = max(0.5, cellH - g);
-      const px = ox + i * cellW + g / 2;
-      const py = oy + j * cellH + g / 2;
+      const sx = ox + i * slotW;
+      const sy = oy + j * slotH;
+      const { px, py, tw, th } = tileRectInSlot(sx, sy, slotW, slotH, g, p.cellShape);
 
       noStroke();
       fill(tileColor);
       rect(px, py, tw, th);
 
-      drawScratchCell(px, py, tw, th, level, p.grain, paper, inkC);
+      drawScratchCell(px, py, tw, th, levelDraw, p.grain, paper, inkC, scratchMult);
     }
   }
 }
