@@ -3,8 +3,6 @@
  */
 
 let inkGrid = null;
-/** Last px/tile used when resampling (for detail drift). */
-let lastResampleDetail = null;
 
 /** CSS font-family list for canvas (quoted names with spaces — full string for ctx.font). */
 function fontStackFor(key) {
@@ -19,7 +17,7 @@ function fontStackFor(key) {
   }
 }
 
-/** Apply font to a p5.Graphics buffer; must use 2d context — textFont() truncates at commas. */
+/** Apply font to a p5.Graphics buffer via 2D context — textFont() truncates at commas. */
 function syncGraphicsCanvasFont(pg, sizePx, familyListCSS) {
   const ctx = pg.drawingContext || (pg.canvas && pg.canvas.getContext("2d"));
   if (!ctx) return;
@@ -77,38 +75,14 @@ function setup() {
   const cnv = createCanvas(w, h);
   cnv.parent(host);
   pixelDensity(1);
+  noLoop();
   bindControls();
   syncLabels();
   regenerate();
 }
 
-function driftedSamplingDetail(p) {
-  const pace = 0.000028 * (0.12 + p.detailPace * 1.88);
-  const t = millis() * pace;
-  const n = noise(t * 1.07 + p.seed * 0.00017, p.seed * 0.005 + 21.3);
-  const jitter = (n - 0.5) * 2 * 3.5;
-  return constrain(Math.round(p.samplingDetail + jitter), 2, 12);
-}
-
 function draw() {
   const p = readParams();
-  if (p.detailDrift) {
-    const d = driftedSamplingDetail(p);
-    if (lastResampleDetail !== d) {
-      lastResampleDetail = d;
-      randomSeed(p.seed);
-      noiseSeed(p.seed % 100000);
-      inkGrid = sampleInkGrid(
-        p.text,
-        p.cols,
-        p.rows,
-        p.thresh,
-        p.fontScale,
-        d,
-        p.fontStack,
-      );
-    }
-  }
   drawScene(p);
 }
 
@@ -116,13 +90,12 @@ function readParams() {
   const g = (id) => document.getElementById(id);
   const num = (id) => Number(g(id).value);
   const val = (id) => g(id).value;
-  const animChk = g("inpAnimateTexture");
-  const detailDriftChk = g("inpDetailDrift");
   const n = constrain(max(1, Math.round(num("inpGridN")) || 1), 1, 256);
   return {
     text: val("inpText") || "a",
     cols: n,
     rows: n,
+    cellShape: val("inpCellShape") || "square",
     pad: num("inpPad"),
     gutter: num("inpGutter"),
     edge: num("inpEdge") / 100,
@@ -132,10 +105,6 @@ function readParams() {
     mosaicBgHex: val("inpMosaicBg"),
     mosaicInkHex: val("inpMosaicInk"),
     seed: num("inpSeed") | 0,
-    animate: !!(animChk && animChk.checked),
-    detailDrift: !!(detailDriftChk && detailDriftChk.checked),
-    detailPace: num("inpDetailPace") / 100,
-    animSpeed: num("inpAnimSpeed") / 100,
     fontScale: num("inpFontScale") / 100,
     fontStack: fontStackFor(val("inpFontFamily")),
     samplingDetail: constrain(Math.round(num("inpSamplingDetail")), 2, 16),
@@ -155,8 +124,6 @@ function syncLabels() {
   set("valGrain", Math.round(p.grain * 100));
   set("valSpread", Math.round(p.spread * 100));
   set("valThresh", Math.round(p.thresh * 100));
-  set("valAnimSpeed", Math.round(p.animSpeed * 100));
-  set("valDetailPace", Math.round(p.detailPace * 100));
   set("valFontScale", Math.round(p.fontScale * 100));
   set("valSamplingDetail", p.samplingDetail);
 }
@@ -169,6 +136,7 @@ function bindControls() {
     "inpMosaicBg",
     "inpMosaicInk",
     "inpGridN",
+    "inpCellShape",
     "inpPad",
     "inpSamplingDetail",
     "inpGutter",
@@ -205,47 +173,15 @@ function bindControls() {
       }
     });
   });
-  const animChk = document.getElementById("inpAnimateTexture");
-  if (animChk) {
-    animChk.addEventListener("change", () => {
-      syncLabels();
-      applyLoopState();
-      if (!readParams().animate && !readParams().detailDrift) redraw();
-    });
-  }
-  const driftChk = document.getElementById("inpDetailDrift");
-  if (driftChk) {
-    driftChk.addEventListener("change", () => {
-      syncLabels();
-      applyLoopState();
-      regenerate();
-    });
-  }
-  const animSpd = document.getElementById("inpAnimSpeed");
-  if (animSpd) {
-    animSpd.addEventListener("input", () => syncLabels());
-  }
-  const detailPaceEl = document.getElementById("inpDetailPace");
-  if (detailPaceEl) {
-    detailPaceEl.addEventListener("input", () => syncLabels());
-  }
   document.getElementById("btnRandomSeed").addEventListener("click", () => {
     document.getElementById("inpSeed").value = String(floor(random(1, 9999999)));
     syncLabels();
     regenerate();
   });
-  document.getElementById("btnRedraw").addEventListener("click", () => {
-    regenerate();
-  });
+  document.getElementById("btnRedraw").addEventListener("click", () => regenerate());
   document.getElementById("btnExport").addEventListener("click", () => {
     saveCanvas("generative-font-" + Date.now(), "png");
   });
-}
-
-function applyLoopState() {
-  const p = readParams();
-  if (p.animate || p.detailDrift) loop();
-  else noLoop();
 }
 
 function regenerate() {
@@ -261,8 +197,6 @@ function regenerate() {
     p.samplingDetail,
     p.fontStack,
   );
-  lastResampleDetail = p.samplingDetail;
-  applyLoopState();
   redraw();
 }
 
@@ -298,20 +232,8 @@ function fitTextToBuffer(pg, lines, pw, ph, startSize, familyListCSS) {
 /**
  * Rasterize text to a buffer and collapse to [rows][cols] ink in 0..1.
  */
-function sampleInkGrid(
-  str,
-  cols,
-  rows,
-  threshSoft,
-  fontScale,
-  samplingDetail,
-  familyListCSS,
-) {
-  let pxPerCell = constrain(
-    Math.round(Number(samplingDetail)) || 4,
-    2,
-    16,
-  );
+function sampleInkGrid(str, cols, rows, threshSoft, fontScale, samplingDetail, familyListCSS) {
+  let pxPerCell = constrain(Math.round(Number(samplingDetail)) || 4, 2, 16);
   const MIN_RASTER = 48;
   let pw = cols * pxPerCell;
   let ph = rows * pxPerCell;
@@ -343,16 +265,13 @@ function sampleInkGrid(
   for (let j = 0; j < rows; j++) {
     grid[j] = [];
     for (let i = 0; i < cols; i++) {
-      let sum = 0;
-      let count = 0;
-      const x0 = floor(i * cw);
-      const y0 = floor(j * ch);
+      let sum = 0, count = 0;
+      const x0 = floor(i * cw), y0 = floor(j * ch);
       const x1 = min(ceil((i + 1) * cw), pw);
       const y1 = min(ceil((j + 1) * ch), ph);
       for (let y = y0; y < y1; y++) {
         for (let x = x0; x < x1; x++) {
-          const idx = 4 * (y * pw + x);
-          sum += pg.pixels[idx];
+          sum += pg.pixels[4 * (y * pw + x)];
           count++;
         }
       }
@@ -373,70 +292,101 @@ function neighborEdge(grid, i, j, cols, rows) {
   const v = grid[j][i];
   if (v < 0.04) return 0;
   let hits = 0;
-  const dirs = [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1],
-  ];
-  for (const [dx, dy] of dirs) {
-    const ni = i + dx;
-    const nj = j + dy;
+  for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    const ni = i + dx, nj = j + dy;
     if (ni < 0 || ni >= cols || nj < 0 || nj >= rows) continue;
-    const nv = grid[nj][ni];
-    if (nv < v * 0.55) hits++;
+    if (grid[nj][ni] < v * 0.55) hits++;
   }
   return hits / 4;
 }
 
-/** Square N×N grid; cell size from shorter padded side so tiles stay square and centered. */
+/**
+ * Returns { cellW, cellH, ox, oy } for the current cell shape.
+ * The grid always fits inside GRID_VIEW_FRAC of the shorter canvas side.
+ * - square  1:1 → N×N tiles, square
+ * - tall    1:2 → N×N tiles, each twice as tall as wide
+ * - wide    2:1 → N×N tiles, each twice as wide as tall
+ */
 const GRID_VIEW_FRAC = 0.84;
 
 function cellLayout(p) {
   const innerW = width - 2 * p.pad;
   const innerH = height - 2 * p.pad;
-  const n = p.cols;
   const maxSide = min(innerW, innerH) * GRID_VIEW_FRAC;
-  const cell = n > 0 ? maxSide / n : 1;
-  const gridW = n * cell;
-  const gridH = n * cell;
+  const N = p.cols;
+  let cellW, cellH;
+  if (p.cellShape === "wide") {
+    // each tile 2:1 — scale so total width still fits maxSide
+    const base = maxSide / (N * 2);
+    cellW = base * 2;
+    cellH = base;
+  } else if (p.cellShape === "tall") {
+    // each tile 1:2 — scale so total height still fits maxSide
+    const base = maxSide / (N * 2);
+    cellW = base;
+    cellH = base * 2;
+  } else {
+    // square 1:1
+    const base = maxSide / N;
+    cellW = cellH = base;
+  }
+  const gridW = N * cellW;
+  const gridH = N * cellH;
   const ox = (width - gridW) / 2;
   const oy = (height - gridH) / 2;
-  return { cell, ox, oy, gridW, gridH };
+  return { cellW, cellH, ox, oy };
 }
 
-/** Subtle RGB drift when animating — reads as a soft color wiggle on letter tiles. */
-function wiggleInkColor(baseCol, p, i, j, ink, animT) {
-  if (!p.animate) return baseCol;
-  const a = animT * (0.9 + p.animSpeed * 0.7);
-  const u = sin(a + i * 0.52 + ink * 7.1) * 0.5 + 0.5;
-  const v = sin(a * 0.82 + j * 0.48 + ink * 6.2) * 0.5 + 0.5;
-  const wv = sin(a * 1.1 + (i + j) * 0.31 + ink * 5) * 0.5 + 0.5;
-  const amp = 10 + 8 * p.animSpeed;
-  const dr = amp * (u - 0.5) * (0.4 + ink * 0.6);
-  const dg = amp * (v - 0.5) * (0.35 + ink * 0.55);
-  const db = (amp + 4) * (wv - 0.5) * (0.45 + ink * 0.5);
-  return color(
-    constrain(red(baseCol) + dr, 0, 255),
-    constrain(green(baseCol) + dg, 0, 255),
-    constrain(blue(baseCol) + db, 0, 255),
-  );
+/**
+ * Draw scratch marks inside one tile — horizontal-ish lines that mimic
+ * relief print / woodblock texture, keyed on tile ink level.
+ */
+function drawScratchCell(px, py, tw, th, ink, grainAmt, paper, inkCol) {
+  if (grainAmt < 0.02) return;
+  const count = floor(3 + grainAmt * 22);
+  for (let k = 0; k < count; k++) {
+    const ry = py + random() * th;
+    // start slightly outside tile edge so scratches can bleed to edge
+    const rx = px - tw * 0.05 + random() * tw * 1.1;
+    const len = tw * (0.25 + random() * 0.85);
+    const angle = (random() - 0.5) * 0.28;   // ≈ ±16° tilt in radians
+    const sw = 0.3 + random() * 1.15;
+    const alpha = grainAmt * 58 * (0.12 + random() * 0.88);
+
+    // Mix of light marks (paper peeking through) and dark marks (ink)
+    const isLight = random() > 0.5 + ink * 0.25; // more light marks on dark tiles
+    let sr, sg, sb;
+    if (isLight) {
+      // slightly lighter than tile base — paper tone bleeding through
+      const t = 0.08 + random() * 0.18;
+      sr = lerp(red(inkCol), red(paper), ink * 0.5 + t);
+      sg = lerp(green(inkCol), green(paper), ink * 0.5 + t);
+      sb = lerp(blue(inkCol), blue(paper), ink * 0.5 + t);
+    } else {
+      // slightly darker than tile base — deeper ink deposit
+      const t = constrain(ink + 0.15 + random() * 0.25, 0, 1);
+      sr = lerp(red(paper), red(inkCol), t);
+      sg = lerp(green(paper), green(inkCol), t);
+      sb = lerp(blue(paper), blue(inkCol), t);
+    }
+    stroke(sr, sg, sb, alpha);
+    strokeWeight(sw);
+    // Nearly horizontal: vertical component is ~15% of horizontal so it reads as scratch
+    line(rx, ry, rx + cos(angle) * len, ry + sin(angle) * len * 0.15);
+  }
+  noStroke();
 }
 
 function drawScene(p) {
   if (!inkGrid) return;
   const cols = p.cols;
   const rows = p.rows;
-  const { cell, ox, oy } = cellLayout(p);
-  const animT =
-    p.animate ? millis() * 0.00055 * (0.35 + p.animSpeed * 1.65) : 0;
+  const { cellW, cellH, ox, oy } = cellLayout(p);
 
   background(p.mosaicBgHex);
   const paper = color(p.mosaicBgHex);
-  const inkC = color(p.mosaicInkHex);
-  const hi = lerpColor(paper, inkC, 0.38);
-  const grainLight = lerpColor(paper, color(255), 0.55);
-  const grainDark = lerpColor(inkC, color(0), 0.45);
+  const inkC  = color(p.mosaicInkHex);
+  const hi    = lerpColor(paper, inkC, 0.38);
 
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
@@ -447,70 +397,24 @@ function drawScene(p) {
       const soften = lerp(1, 1 - p.edge * 0.85, edge);
       let level = ink * soften;
 
-      const n =
-        (noise(
-          i * 0.35 + p.seed * 0.01,
-          j * 0.35 + animT * 0.55,
-          p.seed * 0.02 + animT * 0.25,
-        ) -
-          0.5) *
-        p.spread;
-      const rj = p.animate
-        ? sin(animT * 1.75 + i * 0.31 + j * 0.29) * p.spread * 0.175
-        : (random() - 0.5) * p.spread * 0.35;
-      level = constrain(level + n + rj, 0, 1);
+      const noiseShift =
+        (noise(i * 0.35 + p.seed * 0.01, j * 0.35, p.seed * 0.02) - 0.5) * p.spread;
+      const randJitter = (random() - 0.5) * p.spread * 0.35;
+      level = constrain(level + noiseShift + randJitter, 0, 1);
 
       const base = lerpColor(paper, inkC, level);
-      const edgeTint = lerpColor(base, hi, edge * p.edge * 0.4);
+      const tileColor = lerpColor(base, hi, edge * p.edge * 0.4);
       const g = max(0, p.gutter);
-      const inner = max(0.5, cell - g);
-      const px = ox + i * cell + g / 2;
-      const py = oy + j * cell + g / 2;
+      const tw = max(0.5, cellW - g);
+      const th = max(0.5, cellH - g);
+      const px = ox + i * cellW + g / 2;
+      const py = oy + j * cellH + g / 2;
 
       noStroke();
-      fill(wiggleInkColor(edgeTint, p, i, j, ink, animT));
-      rect(px, py, inner, inner);
+      fill(tileColor);
+      rect(px, py, tw, th);
 
-      if (p.grain > 0.02) {
-        const dots = floor(3 + p.grain * 14);
-        for (let k = 0; k < dots; k++) {
-          let gx;
-          let gy;
-          let a;
-          let d;
-          let light;
-          if (p.animate) {
-            gx =
-              px +
-              inner *
-                noise(i * 0.37 + k * 0.11, j * 0.37 + animT * 0.4, animT * 0.08);
-            gy =
-              py +
-              inner *
-                noise(i * 0.37 + 19.2, j * 0.37 + k * 0.13 + animT * 0.35, animT);
-            a =
-              p.grain *
-              42 *
-              (0.28 +
-                0.72 * noise(k * 0.21 + animT * 0.5, i + j * 0.7, animT * 0.12));
-            d =
-              inner *
-              (0.08 +
-                0.34 *
-                  noise(i * 0.5 + k, j * 0.5 + animT * 0.25, 11.3 + animT * 0.03));
-            light = noise(animT * 0.4, k * 0.3 + i * 0.02, j * 0.02) > 0.5;
-          } else {
-            gx = px + random(inner);
-            gy = py + random(inner);
-            a = p.grain * 42 * random(0.3, 1);
-            light = random() < 0.5;
-            d = random(0.6, inner * 0.42);
-          }
-          if (light) fill(red(grainLight), green(grainLight), blue(grainLight), a);
-          else fill(red(grainDark), green(grainDark), blue(grainDark), a);
-          circle(gx, gy, d);
-        }
-      }
+      drawScratchCell(px, py, tw, th, level, p.grain, paper, inkC);
     }
   }
 }

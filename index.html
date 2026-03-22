@@ -14,7 +14,7 @@
 
     <div class="control-group">
       <h2>Typography</h2>
-      <p class="group-hint">What gets rasterized into the grid</p>
+      <p class="group-hint">Text and typeface rasterized into the grid</p>
       <label>Text</label>
       <input type="text" id="inpText" value="giragira" maxlength="32" />
 
@@ -48,43 +48,35 @@
 
     <div class="control-group">
       <h2>Grid layout</h2>
-      <p class="group-hint">One count for both axes — always square tiles</p>
+      <p class="group-hint">Tile count and rasterization quality</p>
       <label>Grid resolution <span id="valGridN"></span></label>
       <input type="range" id="inpGridN" min="4" max="120" value="52" step="1" />
+
+      <label>Cell shape</label>
+      <select id="inpCellShape">
+        <option value="square">1 : 1 — Square</option>
+        <option value="tall">1 : 2 — Tall rectangle</option>
+        <option value="wide">2 : 1 — Wide rectangle</option>
+      </select>
 
       <label>Padding <span id="valPad"></span>px</label>
       <input type="range" id="inpPad" min="8" max="120" value="16" />
 
       <label>Sampling detail <span id="valSamplingDetail"></span> px/tile</label>
-      <input type="range" id="inpSamplingDetail" min="2" max="12" value="4" step="1" />
+      <input type="range" id="inpSamplingDetail" min="2" max="12" value="6" step="1" />
     </div>
 
     <div class="control-group">
       <h2>Mosaic look</h2>
-      <p class="group-hint">Edges and texture</p>
+      <p class="group-hint">Tile edges, texture, and tonal variation</p>
       <label>Gutter <span id="valGutter"></span>px</label>
       <input type="range" id="inpGutter" min="0" max="6" value="1" />
 
       <label>Edge softness <span id="valEdge"></span></label>
       <input type="range" id="inpEdge" min="0" max="100" value="65" />
 
-      <label>Grain / texture <span id="valGrain"></span></label>
-      <input type="range" id="inpGrain" min="0" max="100" value="40" />
-
-      <label class="inline-check">
-        <input type="checkbox" id="inpAnimateTexture" />
-        <span>Animate texture</span>
-      </label>
-      <label>Animation speed <span id="valAnimSpeed"></span></label>
-      <input type="range" id="inpAnimSpeed" min="5" max="100" value="40" />
-
-      <label class="inline-check">
-        <input type="checkbox" id="inpDetailDrift" />
-        <span>Animate sampling detail</span>
-      </label>
-      <label>Detail drift pace <span id="valDetailPace"></span></label>
-      <input type="range" id="inpDetailPace" min="5" max="100" value="35" />
-      <p class="field-note">Wanders around the slider value using noise; higher pace = faster changes.</p>
+      <label>Scratch density <span id="valGrain"></span></label>
+      <input type="range" id="inpGrain" min="0" max="100" value="55" />
 
       <label>Tone spread <span id="valSpread"></span></label>
       <input type="range" id="inpSpread" min="0" max="100" value="35" />
