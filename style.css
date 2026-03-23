@@ -149,7 +149,8 @@ label {
 
 input[type="text"],
 input[type="number"],
-select {
+select,
+textarea {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--line);
@@ -157,6 +158,14 @@ select {
   background: #fff;
   font: inherit;
   color: var(--ink);
+}
+
+textarea {
+  display: block;
+  min-height: 4.5em;
+  resize: vertical;
+  line-height: 1.4;
+  field-sizing: content;
 }
 
 input[type="range"] {
@@ -345,7 +354,8 @@ button.primary:hover { opacity: 0.88; }
 
   input[type="text"],
   input[type="number"],
-  select {
+  select,
+  textarea {
     padding: 11px 12px;
     font-size: 1rem;
   }

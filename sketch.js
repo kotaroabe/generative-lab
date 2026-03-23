@@ -96,7 +96,7 @@ function readParams() {
   const innerH = max(1, height - 2 * pad);
   const rows = max(1, Math.round(n * innerH / innerW));
   return {
-    text: val("inpText") || "a",
+    text: (val("inpText") || "a").replace(/\r\n?/g, "\n"),
     cols: n,
     rows,
     cellShape: val("inpCellShape") || "square",
