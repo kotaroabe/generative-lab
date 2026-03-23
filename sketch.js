@@ -9,6 +9,8 @@ let userImage = null;
 let stripePrintTexture = null;
 /** Mean luminance of loaded stripe texture (0..1), used to center contrast. */
 let stripePrintTextureMean = 0.5;
+/** Bundled paper texture; loaded in preload. */
+let defaultStripeTextureImage = null;
 /**
  * Tight pixel rect of visible content (alpha above threshold), computed once per load.
  * Used so irregular / padded PNGs scale to fit the ink grid instead of tiny centered blobs.
@@ -102,6 +104,30 @@ function resizeCanvasFromInputs() {
   redraw();
 }
 
+/** Apply stripe texture from a loaded p5.Image; updates mean luminance and optional UI label. */
+function assignStripeTextureFromImage(img, uiLabel) {
+  const nameEl = document.getElementById("stripeTextureFileName");
+  if (!img || img.width <= 0) {
+    stripePrintTexture = null;
+    stripePrintTextureMean = 0.5;
+    if (nameEl) nameEl.textContent = "No texture file loaded";
+    return;
+  }
+  stripePrintTexture = img;
+  stripePrintTexture.loadPixels();
+  let sumL = 0;
+  const np = stripePrintTexture.width * stripePrintTexture.height;
+  for (let pi = 0; pi < np; pi++) {
+    const bi = pi * 4;
+    const tr = stripePrintTexture.pixels[bi];
+    const tg = stripePrintTexture.pixels[bi + 1];
+    const tb = stripePrintTexture.pixels[bi + 2];
+    sumL += (0.299 * tr + 0.587 * tg + 0.114 * tb) / 255;
+  }
+  stripePrintTextureMean = np > 0 ? sumL / np : 0.5;
+  if (nameEl && uiLabel != null) nameEl.textContent = uiLabel;
+}
+
 function setup() {
   const host = document.getElementById("canvasHost");
   const { w, h } = readCanvasSize();
@@ -112,6 +138,31 @@ function setup() {
   bindControls();
   syncLabels();
   regenerate();
+
+  // Data URL (stripe-default-texture-dataurl.js) works under file://; path fallback for http(s).
+  const defaultTexSrc =
+    typeof DEFAULT_STRIPE_TEXTURE_DATA_URL !== "undefined" && DEFAULT_STRIPE_TEXTURE_DATA_URL
+      ? DEFAULT_STRIPE_TEXTURE_DATA_URL
+      : "assets/default-stripe-texture.png";
+  loadImage(
+    defaultTexSrc,
+    (img) => {
+      defaultStripeTextureImage = img;
+      const inp = document.getElementById("inpStripeTextureFile");
+      const noUserFile = !inp || !inp.files || inp.files.length === 0;
+      if (noUserFile) {
+        assignStripeTextureFromImage(img, "Default paper texture");
+        regenerate();
+      }
+    },
+    () => {
+      defaultStripeTextureImage = null;
+      const nameEl = document.getElementById("stripeTextureFileName");
+      const inp = document.getElementById("inpStripeTextureFile");
+      const noUserFile = !inp || !inp.files || inp.files.length === 0;
+      if (nameEl && noUserFile) nameEl.textContent = "No texture file loaded";
+    },
+  );
 }
 
 function draw() {
@@ -394,37 +445,27 @@ function bindControls() {
   if (texFileInp) {
     texFileInp.addEventListener("change", () => {
       const f = texFileInp.files && texFileInp.files[0];
-      const nameEl = document.getElementById("stripeTextureFileName");
       if (!f) {
-        stripePrintTexture = null;
-        if (nameEl) nameEl.textContent = "No texture file loaded";
+        if (defaultStripeTextureImage && defaultStripeTextureImage.width > 0) {
+          assignStripeTextureFromImage(defaultStripeTextureImage, "Default paper texture");
+        } else {
+          assignStripeTextureFromImage(null, null);
+        }
         redraw();
         return;
       }
-      if (nameEl) nameEl.textContent = f.name;
       const url = URL.createObjectURL(f);
       loadImage(
         url,
         (img) => {
           URL.revokeObjectURL(url);
-          stripePrintTexture = img;
-          stripePrintTexture.loadPixels();
-          // Compute mean luminance so texture modulation is centered (not global fade).
-          let sumL = 0;
-          const np = stripePrintTexture.width * stripePrintTexture.height;
-          for (let pi = 0; pi < np; pi++) {
-            const bi = pi * 4;
-            const tr = stripePrintTexture.pixels[bi];
-            const tg = stripePrintTexture.pixels[bi + 1];
-            const tb = stripePrintTexture.pixels[bi + 2];
-            sumL += (0.299 * tr + 0.587 * tg + 0.114 * tb) / 255;
-          }
-          stripePrintTextureMean = np > 0 ? sumL / np : 0.5;
+          assignStripeTextureFromImage(img, f.name);
           redraw();
         },
         () => {
           URL.revokeObjectURL(url);
-          stripePrintTexture = null;
+          assignStripeTextureFromImage(null, null);
+          const nameEl = document.getElementById("stripeTextureFileName");
           if (nameEl) nameEl.textContent = "Could not load texture file";
           redraw();
         },
