@@ -27,7 +27,7 @@
     <!-- Desktop: panel header -->
     <div class="panel-header">
       <h1>GIRAGIRA Generative Lab</h1>
-      <p class="lede">Type text, tune parameters, export PNG.</p>
+      <p class="lede">Text or image → mosaic / offset. Tune and export PNG.</p>
     </div>
 
     <div class="panel-body">
@@ -70,28 +70,44 @@
 
       <div class="control-group">
         <h2>
-          Typography
+          Input
           <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
         </h2>
         <div class="control-group-body">
-          <p class="group-hint">Text and typeface rasterized into the grid. Use line breaks for multiple lines.</p>
-          <label>Text</label>
-          <textarea id="inpText" rows="3" maxlength="500" spellcheck="false">giragira</textarea>
+          <p class="group-hint">Text or image is sampled into the same grid for mosaic or offset output.</p>
 
-          <label>Font</label>
-          <select id="inpFontFamily">
-            <option value="serif">Serif</option>
-            <option value="sans">Sans-serif</option>
-            <option value="gothic">Gothic</option>
-          </select>
+          <div class="input-tabs" role="tablist" aria-label="Input source">
+            <button type="button" class="input-tab is-active" role="tab" aria-selected="true" aria-controls="panelInputText" id="tabInputText" data-input-tab="text">Text</button>
+            <button type="button" class="input-tab" role="tab" aria-selected="false" aria-controls="panelInputImage" id="tabInputImage" data-input-tab="image">Image</button>
+          </div>
 
-          <label>Font size (vs auto) <span id="valFontScale"></span>%</label>
-          <input type="range" id="inpFontScale" min="20" max="200" value="100" />
+          <div id="panelInputText" class="input-panel" role="tabpanel" aria-labelledby="tabInputText">
+            <label>Text</label>
+            <textarea id="inpText" rows="3" maxlength="500" spellcheck="false">giragira</textarea>
+
+            <label>Font</label>
+            <select id="inpFontFamily">
+              <option value="serif">Serif</option>
+              <option value="sans">Sans-serif</option>
+              <option value="gothic">Gothic</option>
+            </select>
+
+            <label>Font size (vs auto) <span id="valFontScale"></span>%</label>
+            <input type="range" id="inpFontScale" min="20" max="200" value="100" />
+          </div>
+
+          <div id="panelInputImage" class="input-panel" role="tabpanel" aria-labelledby="tabInputImage" hidden>
+            <label>Image file</label>
+            <input type="file" id="inpImageFile" accept="image/*" class="visually-hidden" tabindex="-1" />
+            <button type="button" class="btn-file" id="btnPickImage">Choose image…</button>
+            <p class="field-note" id="imageFileHint">PNG, JPEG, WebP, GIF. Image is cropped to fill the grid (center).</p>
+            <p class="field-note" id="imageFileName">No file loaded</p>
+          </div>
 
           <label>Background</label>
           <input type="color" id="inpMosaicBg" value="#ebe6df" />
 
-          <label>Text (letter) color</label>
+          <label>Foreground color</label>
           <input type="color" id="inpMosaicInk" value="#121212" />
         </div>
       </div>

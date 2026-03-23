@@ -3,6 +3,13 @@
  */
 
 let inkGrid = null;
+/** Loaded user image (p5.Image) when Input → Image is used. */
+let userImage = null;
+
+function getInputMode() {
+  const tab = document.querySelector(".input-tab.is-active");
+  return tab && tab.dataset.inputTab === "image" ? "image" : "text";
+}
 
 /** CSS font-family list for canvas (quoted names with spaces — full string for ctx.font). */
 function fontStackFor(key) {
@@ -115,6 +122,7 @@ function readParamsForCanvas(cw, ch) {
   const innerH = max(1, ch - 2 * pad);
   const rows = max(1, Math.round(n * innerH / innerW));
   return {
+    inputMode: getInputMode(),
     text: (val("inpText") || "a").replace(/\r\n?/g, "\n"),
     cols: n,
     rows,
@@ -270,20 +278,90 @@ function bindControls() {
   // ── On mobile, start with most groups collapsed to save space ──
   function applyMobileDefaults() {
     if (window.innerWidth >= 720) return;
-    // Keep Render + Typography open, collapse the rest
+    // Keep Render + Input open, collapse the rest
     const groups = document.querySelectorAll(".control-group");
     groups.forEach((g, i) => {
       if (i > 1) g.classList.add("is-collapsed");
     });
   }
   applyMobileDefaults();
+
+  // ── Input: Text / Image tabs ──
+  document.querySelectorAll(".input-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".input-tab").forEach((t) => {
+        const on = t === tab;
+        t.classList.toggle("is-active", on);
+        t.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      const textP = document.getElementById("panelInputText");
+      const imgP = document.getElementById("panelInputImage");
+      const isImg = tab.dataset.inputTab === "image";
+      if (textP) textP.hidden = isImg;
+      if (imgP) imgP.hidden = !isImg;
+      syncLabels();
+      regenerate();
+    });
+  });
+
+  const pickBtn = document.getElementById("btnPickImage");
+  const fileInp = document.getElementById("inpImageFile");
+  if (pickBtn && fileInp) pickBtn.addEventListener("click", () => fileInp.click());
+  if (fileInp) {
+    fileInp.addEventListener("change", () => {
+      const f = fileInp.files && fileInp.files[0];
+      const nameEl = document.getElementById("imageFileName");
+      if (!f) {
+        if (nameEl) nameEl.textContent = "No file loaded";
+        userImage = null;
+        regenerate();
+        return;
+      }
+      if (nameEl) nameEl.textContent = f.name;
+      const url = URL.createObjectURL(f);
+      loadImage(
+        url,
+        (img) => {
+          URL.revokeObjectURL(url);
+          userImage = img;
+          regenerate();
+        },
+        () => {
+          URL.revokeObjectURL(url);
+          userImage = null;
+          if (nameEl) nameEl.textContent = "Could not load image";
+          regenerate();
+        },
+      );
+    });
+  }
 }
 
-function regenerate() {
-  const p = readParams();
+function emptyInkGrid(cols, rows) {
+  const g = [];
+  for (let j = 0; j < rows; j++) {
+    g[j] = [];
+    for (let i = 0; i < cols; i++) g[j][i] = 0;
+  }
+  return g;
+}
+
+function buildInkGrid(p) {
   randomSeed(p.seed);
   noiseSeed(p.seed % 100000);
-  inkGrid = sampleInkGrid(
+  if (p.inputMode === "image") {
+    if (userImage && userImage.width > 0) {
+      return sampleInkGridFromImage(
+        userImage,
+        p.cols,
+        p.rows,
+        p.thresh,
+        p.samplingDetail,
+      );
+    }
+    return emptyInkGrid(p.cols, p.rows);
+  }
+  return sampleInkGrid(
     p.text,
     p.cols,
     p.rows,
@@ -292,6 +370,11 @@ function regenerate() {
     p.samplingDetail,
     p.fontStack,
   );
+}
+
+function regenerate() {
+  const p = readParams();
+  inkGrid = buildInkGrid(p);
   redraw();
 }
 
@@ -321,17 +404,7 @@ function exportPng() {
   let grid = inkGrid;
   const pDraw = readParamsForCanvas(ew, eh);
   if (needNewGrid) {
-    randomSeed(pBase.seed);
-    noiseSeed(pBase.seed % 100000);
-    grid = sampleInkGrid(
-      pBase.text,
-      pDraw.cols,
-      pDraw.rows,
-      pBase.thresh,
-      pBase.fontScale,
-      pBase.samplingDetail,
-      pBase.fontStack,
-    );
+    grid = buildInkGrid({ ...pBase, cols: pDraw.cols, rows: pDraw.rows });
   }
 
   const g = createGraphics(ew, eh);
@@ -370,35 +443,11 @@ function fitTextToBuffer(pg, lines, pw, ph, startSize, familyListCSS) {
   pg.textLeading(size * 0.92);
 }
 
-/**
- * Rasterize text to a buffer and collapse to [rows][cols] ink in 0..1.
- */
-function sampleInkGrid(str, cols, rows, threshSoft, fontScale, samplingDetail, familyListCSS) {
-  let pxPerCell = constrain(Math.round(Number(samplingDetail)) || 4, 2, 16);
-  const MIN_RASTER = 48;
-  let pw = cols * pxPerCell;
-  let ph = rows * pxPerCell;
-  while ((pw < MIN_RASTER || ph < MIN_RASTER) && pxPerCell < 96) {
-    pxPerCell += 1;
-    pw = cols * pxPerCell;
-    ph = rows * pxPerCell;
-  }
-  const pg = createGraphics(pw, ph);
-  pg.pixelDensity(1);
-  pg.background(255);
-  pg.fill(0);
-  pg.noStroke();
-  pg.textAlign(CENTER, CENTER);
-  const display = str.trim().length ? str : " ";
-  const lines = display.split(/\n/).map((l) => l.replace(/\r/g, ""));
-  const charCount = display.replace(/\n/g, "").length;
-  const fs = constrain(Number(fontScale) || 1, 0.2, 2.5);
-  const span = pxPerCell * max(cols, rows);
-  const sizeGuess = span * (charCount > 4 ? 0.38 : 0.62) * fs;
-  fitTextToBuffer(pg, lines, pw, ph, sizeGuess, familyListCSS);
-  drawRasterText(pg, display, pw, ph, familyListCSS);
-
+/** Average luma per cell → ink 0..1 (dark = high ink). Handles alpha by compositing on white. */
+function collapseRasterToInkGrid(pg, cols, rows, threshSoft) {
   pg.loadPixels();
+  const pw = pg.width;
+  const ph = pg.height;
   const cw = pw / cols;
   const ch = ph / rows;
   const grid = [];
@@ -406,13 +455,21 @@ function sampleInkGrid(str, cols, rows, threshSoft, fontScale, samplingDetail, f
   for (let j = 0; j < rows; j++) {
     grid[j] = [];
     for (let i = 0; i < cols; i++) {
-      let sum = 0, count = 0;
-      const x0 = floor(i * cw), y0 = floor(j * ch);
+      let sum = 0;
+      let count = 0;
+      const x0 = floor(i * cw);
+      const y0 = floor(j * ch);
       const x1 = min(ceil((i + 1) * cw), pw);
       const y1 = min(ceil((j + 1) * ch), ph);
       for (let y = y0; y < y1; y++) {
         for (let x = x0; x < x1; x++) {
-          sum += pg.pixels[4 * (y * pw + x)];
+          const idx = 4 * (y * pw + x);
+          const r = pg.pixels[idx];
+          const gc = pg.pixels[idx + 1];
+          const b = pg.pixels[idx + 2];
+          const a = pg.pixels[idx + 3] / 255;
+          const L = 0.299 * r + 0.587 * gc + 0.114 * b;
+          sum += L * a + 255 * (1 - a);
           count++;
         }
       }
@@ -427,6 +484,77 @@ function sampleInkGrid(str, cols, rows, threshSoft, fontScale, samplingDetail, f
     }
   }
   return grid;
+}
+
+function rasterBufferSize(cols, rows, samplingDetail) {
+  let pxPerCell = constrain(Math.round(Number(samplingDetail)) || 4, 2, 16);
+  const MIN_RASTER = 48;
+  let pw = cols * pxPerCell;
+  let ph = rows * pxPerCell;
+  while ((pw < MIN_RASTER || ph < MIN_RASTER) && pxPerCell < 96) {
+    pxPerCell += 1;
+    pw = cols * pxPerCell;
+    ph = rows * pxPerCell;
+  }
+  return { pw, ph, pxPerCell };
+}
+
+/** Scale + center-crop image to fill dw×dh (object-cover). */
+function drawImageCover(pg, img, dx, dy, dw, dh) {
+  if (!img || img.width <= 0) return;
+  const ir = img.width / img.height;
+  const br = dw / dh;
+  let sx;
+  let sy;
+  let sw;
+  let sh;
+  if (ir > br) {
+    sh = img.height;
+    sw = sh * br;
+    sx = (img.width - sw) / 2;
+    sy = 0;
+  } else {
+    sw = img.width;
+    sh = sw / br;
+    sx = 0;
+    sy = (img.height - sh) / 2;
+  }
+  pg.image(img, dx, dy, dw, dh, sx, sy, sw, sh);
+}
+
+/**
+ * Sample a photo into [rows][cols] ink — same pipeline as text after rasterization.
+ */
+function sampleInkGridFromImage(img, cols, rows, threshSoft, samplingDetail) {
+  const { pw, ph } = rasterBufferSize(cols, rows, samplingDetail);
+  const pg = createGraphics(pw, ph);
+  pg.pixelDensity(1);
+  pg.background(255);
+  drawImageCover(pg, img, 0, 0, pw, ph);
+  return collapseRasterToInkGrid(pg, cols, rows, threshSoft);
+}
+
+/**
+ * Rasterize text to a buffer and collapse to [rows][cols] ink in 0..1.
+ */
+function sampleInkGrid(str, cols, rows, threshSoft, fontScale, samplingDetail, familyListCSS) {
+  const { pw, ph } = rasterBufferSize(cols, rows, samplingDetail);
+  const pg = createGraphics(pw, ph);
+  pg.pixelDensity(1);
+  pg.background(255);
+  pg.fill(0);
+  pg.noStroke();
+  pg.textAlign(CENTER, CENTER);
+  const display = str.trim().length ? str : " ";
+  const lines = display.split(/\n/).map((l) => l.replace(/\r/g, ""));
+  const charCount = display.replace(/\n/g, "").length;
+  const fs = constrain(Number(fontScale) || 1, 0.2, 2.5);
+  const pxPerCell = pw / cols;
+  const span = pxPerCell * max(cols, rows);
+  const sizeGuess = span * (charCount > 4 ? 0.38 : 0.62) * fs;
+  fitTextToBuffer(pg, lines, pw, ph, sizeGuess, familyListCSS);
+  drawRasterText(pg, display, pw, ph, familyListCSS);
+  return collapseRasterToInkGrid(pg, cols, rows, threshSoft);
 }
 
 function neighborEdge(grid, i, j, cols, rows) {

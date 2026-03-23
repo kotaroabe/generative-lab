@@ -138,6 +138,61 @@ body {
   opacity: 0.9;
 }
 
+/* Input section: Text / Image tabs */
+.input-tabs {
+  display: flex;
+  margin: 4px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.input-tab {
+  flex: 1;
+  margin: 0;
+  padding: 10px 12px;
+  border: none;
+  border-right: 1px solid var(--line);
+  background: #faf9f7;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  min-height: 40px;
+}
+
+.input-tab:last-child {
+  border-right: none;
+}
+
+.input-tab.is-active {
+  background: #fff;
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.input-panel[hidden] {
+  display: none !important;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+button.btn-file {
+  width: 100%;
+}
+
 /* ─── Labels & inputs ─────────────────────────────────────── */
 label {
   display: block;
