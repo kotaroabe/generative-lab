@@ -34,6 +34,37 @@
 
       <div class="control-group">
         <h2>
+          Render
+          <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
+        </h2>
+        <div class="control-group-body">
+          <p class="group-hint">How the sampled grid is drawn — separate from grid resolution.</p>
+          <label>Render mode</label>
+          <select id="inpRenderMode">
+            <option value="mosaic">Mosaic cells</option>
+            <option value="offset">Offset dots</option>
+          </select>
+          <p class="field-note">Offset dots: tone is mostly mark size (halftone-like), not tile color blending.</p>
+
+          <label>Tile primitive (mosaic)</label>
+          <select id="inpTilePrimitive">
+            <option value="rect">Rectangle</option>
+            <option value="circle">Circle</option>
+          </select>
+
+          <label>Offset dot gain <span id="valDotGain"></span>%</label>
+          <input type="range" id="inpDotGain" min="40" max="200" value="120" />
+
+          <label>Offset jitter <span id="valDotJitter"></span>%</label>
+          <input type="range" id="inpDotJitter" min="0" max="40" value="8" />
+
+          <label>Offset square mix <span id="valDotSquareMix"></span>%</label>
+          <input type="range" id="inpDotSquareMix" min="0" max="100" value="32" />
+        </div>
+      </div>
+
+      <div class="control-group">
+        <h2>
           Typography
           <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
         </h2>
@@ -66,13 +97,21 @@
           <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
         </h2>
         <div class="control-group-body">
-          <p class="group-hint">Export dimensions (preview scales to fit)</p>
-          <label>Size (px) — width × height</label>
+          <p class="group-hint">Preview is what you see; export can be larger (same aspect ratio keeps the same grid).</p>
+          <label>Preview size (px)</label>
           <div class="row row-dims">
-            <input type="number" id="inpCanvasW" value="880" min="200" max="4096" step="1" />
+            <input type="number" id="inpCanvasW" value="800" min="200" max="4096" step="1" />
             <span class="dim-sep">×</span>
-            <input type="number" id="inpCanvasH" value="880" min="200" max="4096" step="1" />
+            <input type="number" id="inpCanvasH" value="800" min="200" max="4096" step="1" />
           </div>
+
+          <label>Export size (px)</label>
+          <div class="row row-dims">
+            <input type="number" id="inpExportW" value="1600" min="200" max="8192" step="1" />
+            <span class="dim-sep">×</span>
+            <input type="number" id="inpExportH" value="1600" min="200" max="8192" step="1" />
+          </div>
+          <p class="field-note">If preview and export aspect ratios differ, row count changes and the mosaic is re-sampled for export.</p>
         </div>
       </div>
 

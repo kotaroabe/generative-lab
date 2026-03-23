@@ -49,17 +49,26 @@ function drawRasterText(pg, display, pw, ph, familyListCSS) {
   }
 }
 
-function clampCanvasDim(v) {
+function clampCanvasDim(v, maxDim) {
   const n = Number(v);
-  if (!Number.isFinite(n)) return 880;
-  return constrain(Math.round(n), 200, 4096);
+  const cap = maxDim != null ? maxDim : 4096;
+  if (!Number.isFinite(n)) return min(880, cap);
+  return constrain(Math.round(n), 200, cap);
 }
 
 function readCanvasSize() {
   const g = (id) => document.getElementById(id);
   return {
-    w: clampCanvasDim(g("inpCanvasW").value),
-    h: clampCanvasDim(g("inpCanvasH").value),
+    w: clampCanvasDim(g("inpCanvasW").value, 4096),
+    h: clampCanvasDim(g("inpCanvasH").value, 4096),
+  };
+}
+
+function readExportSize() {
+  const g = (id) => document.getElementById(id);
+  return {
+    w: clampCanvasDim(g("inpExportW").value, 8192),
+    h: clampCanvasDim(g("inpExportH").value, 8192),
   };
 }
 
@@ -83,22 +92,26 @@ function setup() {
 
 function draw() {
   const p = readParams();
-  drawScene(p);
+  if (p.renderMode === "offset") drawOffsetPrintScene(p, null, null);
+  else drawScene(p, null, null);
 }
 
-function readParams() {
+/** All parameters; `cw`/`ch` are the logical canvas size used for grid row count + layout. */
+function readParamsForCanvas(cw, ch) {
   const g = (id) => document.getElementById(id);
   const num = (id) => Number(g(id).value);
   const val = (id) => g(id).value;
   const n = constrain(max(1, Math.round(num("inpGridN")) || 1), 1, 256);
   const pad = constrain(Math.round(num("inpPad")) || 0, 0, 500);
-  const innerW = max(1, width - 2 * pad);
-  const innerH = max(1, height - 2 * pad);
+  const innerW = max(1, cw - 2 * pad);
+  const innerH = max(1, ch - 2 * pad);
   const rows = max(1, Math.round(n * innerH / innerW));
   return {
     text: (val("inpText") || "a").replace(/\r\n?/g, "\n"),
     cols: n,
     rows,
+    renderMode: val("inpRenderMode") || "mosaic",
+    tilePrimitive: val("inpTilePrimitive") || "rect",
     cellShape: val("inpCellShape") || "square",
     pad,
     gutter: num("inpGutter"),
@@ -107,6 +120,9 @@ function readParams() {
     spread: num("inpSpread") / 100,
     contrast: constrain(num("inpContrast") / 100, 0, 1),
     thresh: num("inpThresh") / 100,
+    dotGain: constrain(num("inpDotGain") / 100, 0.4, 2),
+    dotJitter: constrain(num("inpDotJitter") / 100, 0, 0.4),
+    dotSquareMix: constrain(num("inpDotSquareMix") / 100, 0, 1),
     mosaicBgHex: val("inpMosaicBg"),
     mosaicInkHex: val("inpMosaicInk"),
     seed: num("inpSeed") | 0,
@@ -114,6 +130,10 @@ function readParams() {
     fontStack: fontStackFor(val("inpFontFamily")),
     samplingDetail: constrain(Math.round(num("inpSamplingDetail")), 2, 16),
   };
+}
+
+function readParams() {
+  return readParamsForCanvas(width, height);
 }
 
 function syncLabels() {
@@ -130,6 +150,9 @@ function syncLabels() {
   set("valSpread", Math.round(p.spread * 100));
   set("valContrast", Math.round(p.contrast * 100));
   set("valThresh", Math.round(p.thresh * 100));
+  set("valDotGain", Math.round(p.dotGain * 100));
+  set("valDotJitter", Math.round(p.dotJitter * 100));
+  set("valDotSquareMix", Math.round(p.dotSquareMix * 100));
   set("valFontScale", Math.round(p.fontScale * 100));
   set("valSamplingDetail", p.samplingDetail);
 }
@@ -142,6 +165,10 @@ function bindControls() {
     "inpMosaicBg",
     "inpMosaicInk",
     "inpGridN",
+    "inpExportW",
+    "inpExportH",
+    "inpRenderMode",
+    "inpTilePrimitive",
     "inpCellShape",
     "inpPad",
     "inpSamplingDetail",
@@ -151,6 +178,9 @@ function bindControls() {
     "inpSpread",
     "inpContrast",
     "inpThresh",
+    "inpDotGain",
+    "inpDotJitter",
+    "inpDotSquareMix",
     "inpSeed",
   ];
   const onChange = () => {
@@ -165,9 +195,15 @@ function bindControls() {
   });
   const commitCanvasSize = () => {
     const g = (id) => document.getElementById(id);
-    g("inpCanvasW").value = String(clampCanvasDim(g("inpCanvasW").value));
-    g("inpCanvasH").value = String(clampCanvasDim(g("inpCanvasH").value));
+    g("inpCanvasW").value = String(clampCanvasDim(g("inpCanvasW").value, 4096));
+    g("inpCanvasH").value = String(clampCanvasDim(g("inpCanvasH").value, 4096));
     resizeCanvasFromInputs();
+  };
+  const commitExportSize = () => {
+    const g = (id) => document.getElementById(id);
+    g("inpExportW").value = String(clampCanvasDim(g("inpExportW").value, 8192));
+    g("inpExportH").value = String(clampCanvasDim(g("inpExportH").value, 8192));
+    syncLabels();
   };
   ["inpCanvasW", "inpCanvasH"].forEach((id) => {
     const el = document.getElementById(id);
@@ -180,21 +216,30 @@ function bindControls() {
       }
     });
   });
+  ["inpExportW", "inpExportH"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("change", commitExportSize);
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commitExportSize();
+      }
+    });
+  });
   document.getElementById("btnRandomSeed").addEventListener("click", () => {
     document.getElementById("inpSeed").value = String(floor(random(1, 9999999)));
     syncLabels();
     regenerate();
   });
   document.getElementById("btnRedraw").addEventListener("click", () => regenerate());
-  document.getElementById("btnExport").addEventListener("click", () => {
-    saveCanvas("generative-font-" + Date.now(), "png");
-  });
+  document.getElementById("btnExport").addEventListener("click", () => exportPng());
 
   // Mobile toolbar duplicates
   const btnRM = document.getElementById("btnRedrawMobile");
   const btnEM = document.getElementById("btnExportMobile");
   if (btnRM) btnRM.addEventListener("click", () => regenerate());
-  if (btnEM) btnEM.addEventListener("click", () => saveCanvas("generative-font-" + Date.now(), "png"));
+  if (btnEM) btnEM.addEventListener("click", () => exportPng());
 
   // ── Accordion: click h2 to collapse / expand a control group ──
   document.querySelectorAll(".control-group h2").forEach((h2) => {
@@ -215,10 +260,10 @@ function bindControls() {
   // ── On mobile, start with most groups collapsed to save space ──
   function applyMobileDefaults() {
     if (window.innerWidth >= 720) return;
-    // Keep Typography open (first group), collapse the rest
+    // Keep Render + Typography open, collapse the rest
     const groups = document.querySelectorAll(".control-group");
     groups.forEach((g, i) => {
-      if (i > 0) g.classList.add("is-collapsed");
+      if (i > 1) g.classList.add("is-collapsed");
     });
   }
   applyMobileDefaults();
@@ -238,6 +283,52 @@ function regenerate() {
     p.fontStack,
   );
   redraw();
+}
+
+/** Row count for a given canvas size (must match readParamsForCanvas). */
+function gridRowsForCanvas(cols, pad, cw, ch) {
+  const innerW = max(1, cw - 2 * pad);
+  const innerH = max(1, ch - 2 * pad);
+  return max(1, Math.round(cols * innerH / innerW));
+}
+
+/**
+ * Save at export resolution. Renders offscreen so preview canvas stays at preview size.
+ * Same aspect ratio as preview → same row count → same ink grid. Otherwise re-samples for export.
+ */
+function exportPng() {
+  const { w: pw, h: ph } = readCanvasSize();
+  const { w: ew, h: eh } = readExportSize();
+  if (ew === pw && eh === ph) {
+    saveCanvas("generative-font-" + Date.now(), "png");
+    return;
+  }
+  const pBase = readParams();
+  const rowsPreview = gridRowsForCanvas(pBase.cols, pBase.pad, pw, ph);
+  const rowsExport = gridRowsForCanvas(pBase.cols, pBase.pad, ew, eh);
+  const needNewGrid = rowsPreview !== rowsExport;
+
+  let grid = inkGrid;
+  const pDraw = readParamsForCanvas(ew, eh);
+  if (needNewGrid) {
+    randomSeed(pBase.seed);
+    noiseSeed(pBase.seed % 100000);
+    grid = sampleInkGrid(
+      pBase.text,
+      pDraw.cols,
+      pDraw.rows,
+      pBase.thresh,
+      pBase.fontScale,
+      pBase.samplingDetail,
+      pBase.fontStack,
+    );
+  }
+
+  const g = createGraphics(ew, eh);
+  g.pixelDensity(1);
+  if (pDraw.renderMode === "offset") drawOffsetPrintScene(pDraw, g, grid);
+  else drawScene(pDraw, g, grid);
+  g.save("generative-font-" + Date.now() + ".png");
 }
 
 /**
@@ -345,10 +436,12 @@ function neighborEdge(grid, i, j, cols, rows) {
  * slot = innerW / cols — cells are square because rows = round(cols × innerH/innerW).
  * Any rounding remainder is absorbed by the oy centering offset.
  */
-function cellLayout(p) {
+function cellLayout(p, cw, ch) {
+  const W = cw != null ? cw : width;
+  const H = ch != null ? ch : height;
   const pad = max(0, p.pad);
-  const innerW = max(1, width - 2 * pad);
-  const innerH = max(1, height - 2 * pad);
+  const innerW = max(1, W - 2 * pad);
+  const innerH = max(1, H - 2 * pad);
   const slot = p.cols > 0 ? innerW / p.cols : 1;
   const gridW = p.cols * slot;
   const gridH = p.rows * slot;
@@ -407,7 +500,8 @@ function applyToneContrast(t, contrast01) {
  * Draw scratch marks inside one tile — horizontal-ish lines that mimic
  * relief print / woodblock texture, keyed on tile ink level.
  */
-function drawScratchCell(px, py, tw, th, ink, grainAmt, paper, inkCol, scratchCountMult) {
+/** `ctx` null = main canvas; else p5.Graphics */
+function drawScratchCell(ctx, px, py, tw, th, ink, grainAmt, paper, inkCol, scratchCountMult) {
   if (grainAmt < 0.02) return;
   const span = max(tw, th);
   const mult = scratchCountMult >= 0.5 ? scratchCountMult : 1;
@@ -437,35 +531,132 @@ function drawScratchCell(px, py, tw, th, ink, grainAmt, paper, inkCol, scratchCo
       sg = lerp(green(paper), green(inkCol), t);
       sb = lerp(blue(paper), blue(inkCol), t);
     }
-    stroke(sr, sg, sb, alpha);
-    strokeWeight(sw);
-    // Nearly horizontal: vertical component is ~15% of horizontal so it reads as scratch
-    line(rx, ry, rx + cos(angle) * len, ry + sin(angle) * len * 0.15);
+    if (ctx) {
+      ctx.stroke(sr, sg, sb, alpha);
+      ctx.strokeWeight(sw);
+      ctx.line(rx, ry, rx + cos(angle) * len, ry + sin(angle) * len * 0.15);
+    } else {
+      stroke(sr, sg, sb, alpha);
+      strokeWeight(sw);
+      line(rx, ry, rx + cos(angle) * len, ry + sin(angle) * len * 0.15);
+    }
   }
-  noStroke();
+  if (ctx) ctx.noStroke();
+  else noStroke();
 }
 
-function drawScene(p) {
-  if (!inkGrid) return;
+/**
+ * Offset print mode: mark size carries tone (not tile fill color).
+ * Dots are mostly circular with optional square mixing to mimic print artifacts.
+ */
+/** `ctx` null = main canvas. `gridOverride` optional for export re-sample. */
+function drawOffsetPrintScene(p, ctx, gridOverride) {
+  const grid = gridOverride || inkGrid;
+  if (!grid) return;
   const cols = p.cols;
   const rows = p.rows;
-  const { slotW, slotH, ox, oy } = cellLayout(p);
-  const g = max(0, p.gutter);
+  const W = ctx ? ctx.width : width;
+  const H = ctx ? ctx.height : height;
+  const { slotW, slotH, ox, oy } = cellLayout(p, W, H);
+  const gutter = max(0, p.gutter);
 
-  background(p.mosaicBgHex);
-  const paper = color(p.mosaicBgHex);
-  const inkC  = color(p.mosaicInkHex);
-  const hi    = lerpColor(paper, inkC, 0.38);
-  const { fillFrac } = tileRectInSlot(0, 0, slotW, slotH, g, p.cellShape);
-  /** ~constant scratch strokes per unit tile area (tall/wide insets cover less of the slot). */
-  const scratchMult = fillFrac < 0.999 ? 1 / sqrt(fillFrac) : 1;
+  const inkC = color(p.mosaicInkHex);
+  const maxDBase = max(1, min(slotW, slotH) - gutter);
+
+  if (ctx) {
+    ctx.background(p.mosaicBgHex);
+    ctx.noStroke();
+    ctx.rectMode(CENTER);
+    ctx.ellipseMode(CENTER);
+  } else {
+    background(p.mosaicBgHex);
+    noStroke();
+    rectMode(CENTER);
+    ellipseMode(CENTER);
+  }
 
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
-      let ink = inkGrid[j][i];
+      let ink = grid[j][i];
+      if (ink < 0.01) continue;
+
+      const edge = neighborEdge(grid, i, j, cols, rows);
+      const soften = lerp(1, 1 - p.edge * 0.85, edge);
+      let level = ink * soften;
+      const noiseShift =
+        (noise(i * 0.35 + p.seed * 0.01, j * 0.35, p.seed * 0.02) - 0.5) * p.spread;
+      level = constrain(level + noiseShift, 0, 1);
+      level = applyToneContrast(level, p.contrast);
+
+      // Dot size encodes tone, like offset halftone.
+      const dotT = constrain(pow(level, 0.72) * p.dotGain, 0, 1);
+      const d = max(maxDBase * 0.08, maxDBase * dotT);
+      if (d < 0.6) continue;
+
+      const cx =
+        ox +
+        i * slotW +
+        slotW / 2 +
+        (noise(i * 0.91 + p.seed * 0.003, j * 0.77 + 17.1) - 0.5) * slotW * p.dotJitter;
+      const cy =
+        oy +
+        j * slotH +
+        slotH / 2 +
+        (noise(i * 0.67 + 42.4, j * 0.83 + p.seed * 0.002) - 0.5) * slotH * p.dotJitter;
+
+      const squareLike = noise(i * 1.13 + p.seed * 0.004, j * 1.07 + 23.9) < p.dotSquareMix;
+      if (ctx) {
+        ctx.fill(inkC);
+        if (squareLike) ctx.rect(cx, cy, d, d);
+        else ctx.circle(cx, cy, d);
+      } else {
+        fill(inkC);
+        if (squareLike) rect(cx, cy, d, d);
+        else circle(cx, cy, d);
+      }
+    }
+  }
+  if (ctx) {
+    ctx.rectMode(CORNER);
+    ctx.ellipseMode(CENTER);
+  } else {
+    rectMode(CORNER);
+  }
+}
+
+function drawScene(p, ctx, gridOverride) {
+  const grid = gridOverride || inkGrid;
+  if (!grid) return;
+  const cols = p.cols;
+  const rows = p.rows;
+  const W = ctx ? ctx.width : width;
+  const H = ctx ? ctx.height : height;
+  const { slotW, slotH, ox, oy } = cellLayout(p, W, H);
+  const gutter = max(0, p.gutter);
+
+  const paper = color(p.mosaicBgHex);
+  const inkC  = color(p.mosaicInkHex);
+  const hi    = lerpColor(paper, inkC, 0.38);
+  const { fillFrac: rectFillFrac } = tileRectInSlot(0, 0, slotW, slotH, gutter, p.cellShape);
+  const primitiveFillFrac = p.tilePrimitive === "circle" ? PI / 4 : 1;
+  const fillFrac = rectFillFrac * primitiveFillFrac;
+  /** ~constant scratch strokes per unit tile area (tall/wide insets cover less of the slot). */
+  const scratchMult = fillFrac < 0.999 ? 1 / sqrt(fillFrac) : 1;
+
+  if (ctx) {
+    ctx.background(p.mosaicBgHex);
+    ctx.noStroke();
+  } else {
+    background(p.mosaicBgHex);
+    noStroke();
+  }
+
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      let ink = grid[j][i];
       if (ink < 0.02) continue;
 
-      const edge = neighborEdge(inkGrid, i, j, cols, rows);
+      const edge = neighborEdge(grid, i, j, cols, rows);
       const soften = lerp(1, 1 - p.edge * 0.85, edge);
       let level = ink * soften;
 
@@ -480,13 +671,29 @@ function drawScene(p) {
       const tileColor = lerpColor(base, hi, edge * p.edge * 0.4);
       const sx = ox + i * slotW;
       const sy = oy + j * slotH;
-      const { px, py, tw, th } = tileRectInSlot(sx, sy, slotW, slotH, g, p.cellShape);
+      const { px, py, tw, th } = tileRectInSlot(sx, sy, slotW, slotH, gutter, p.cellShape);
 
-      noStroke();
-      fill(tileColor);
-      rect(px, py, tw, th);
+      if (ctx) {
+        ctx.fill(tileColor);
+        if (p.tilePrimitive === "circle") {
+          const d = min(tw, th);
+          ctx.circle(px + tw / 2, py + th / 2, d);
+        } else {
+          ctx.rect(px, py, tw, th);
+        }
+      } else {
+        fill(tileColor);
+        if (p.tilePrimitive === "circle") {
+          const d = min(tw, th);
+          circle(px + tw / 2, py + th / 2, d);
+        } else {
+          rect(px, py, tw, th);
+        }
+      }
 
-      drawScratchCell(px, py, tw, th, levelDraw, p.grain, paper, inkC, scratchMult);
+      if (p.tilePrimitive !== "circle") {
+        drawScratchCell(ctx, px, py, tw, th, levelDraw, p.grain, paper, inkC, scratchMult);
+      }
     }
   }
 }
