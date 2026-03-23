@@ -27,7 +27,7 @@
     <!-- Desktop: panel header -->
     <div class="panel-header">
       <h1>GIRAGIRA Generative Lab</h1>
-      <p class="lede">Text or image → mosaic / offset. Tune and export PNG.</p>
+      <p class="lede">Text or image → mosaic, striped block, or offset. Tune and export PNG.</p>
     </div>
 
     <div class="panel-body">
@@ -42,12 +42,14 @@
           <label>Render mode</label>
           <select id="inpRenderMode">
             <option value="mosaic">Mosaic cells</option>
+            <option value="stripe" selected>Striped block</option>
             <option value="offset">Offset dots</option>
           </select>
-          <p class="field-note only-mosaic">Mosaic: filled tiles, optional scratches, tile primitive &amp; cell shape.</p>
+          <p class="field-note only-mosaic-render">Mosaic: filled tiles, optional scratches, tile primitive &amp; cell shape.</p>
+          <p class="field-note only-stripe">Striped block: custom built-in block alphabet (A-Z/0-9) with edge-first dark stripes and an accent fill.</p>
           <p class="field-note only-offset">Offset: tone is mostly mark size (halftone-like), not tile fill blending.</p>
 
-          <div class="only-mosaic">
+          <div class="only-mosaic-render">
             <label>Tile primitive</label>
             <select id="inpTilePrimitive">
               <option value="rect">Rectangle</option>
@@ -55,16 +57,6 @@
             </select>
           </div>
 
-          <div class="only-offset">
-            <label>Offset dot gain <span id="valDotGain"></span>%</label>
-            <input type="range" id="inpDotGain" min="40" max="200" value="120" />
-
-            <label>Offset jitter <span id="valDotJitter"></span>%</label>
-            <input type="range" id="inpDotJitter" min="0" max="40" value="8" />
-
-            <label>Offset square mix <span id="valDotSquareMix"></span>%</label>
-            <input type="range" id="inpDotSquareMix" min="0" max="100" value="32" />
-          </div>
         </div>
       </div>
 
@@ -74,7 +66,7 @@
           <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
         </h2>
         <div class="control-group-body">
-          <p class="group-hint">Text or image is sampled into the same grid for mosaic or offset output.</p>
+          <p class="group-hint">Text or image feeds the mosaic/offset grid. <strong>Image</strong> tab: <strong>Image scale</strong> &amp; <strong>Lighten</strong> for photo sampling. <strong>Striped block</strong>: <strong>Texture zoom</strong> &amp; <strong>Lighten texture</strong> sit under Texture file (below).</p>
 
           <div class="input-tabs" role="tablist" aria-label="Input source">
             <button type="button" class="input-tab is-active" role="tab" aria-selected="true" aria-controls="panelInputText" id="tabInputText" data-input-tab="text">Text</button>
@@ -85,15 +77,15 @@
             <label>Text</label>
             <textarea id="inpText" rows="3" maxlength="500" spellcheck="false">giragira</textarea>
 
-            <label>Font</label>
-            <select id="inpFontFamily">
+            <label class="not-stripe">Font</label>
+            <select id="inpFontFamily" class="not-stripe">
               <option value="serif">Serif</option>
               <option value="sans">Sans-serif</option>
               <option value="gothic">Gothic</option>
             </select>
 
-            <label>Font size (vs auto) <span id="valFontScale"></span>%</label>
-            <input type="range" id="inpFontScale" min="20" max="200" value="100" />
+            <label class="not-stripe">Font size (vs auto) <span id="valFontScale"></span>%</label>
+            <input class="not-stripe" type="range" id="inpFontScale" min="20" max="200" value="100" />
           </div>
 
           <div id="panelInputImage" class="input-panel" role="tabpanel" aria-labelledby="tabInputImage" hidden>
@@ -104,11 +96,49 @@
             <p class="field-note" id="imageFileName">No file loaded</p>
           </div>
 
+          <div id="imageInputExtras" class="image-input-extras" role="group" aria-label="Image sampling options" hidden>
+            <label>Image scale <span id="valImageScale"></span>%</label>
+            <input type="range" id="inpImageScale" min="50" max="200" value="100" step="1" />
+            <p class="field-note">Zooms the crop into the image (center). 100% uses the full image width.</p>
+
+            <label class="check-row">
+              <input type="checkbox" id="inpImageLighten" />
+              Lighten image input
+            </label>
+            <p class="field-note">Adds a light wash before ink sampling so dark photos read more clearly.</p>
+          </div>
+
           <label>Background</label>
           <input type="color" id="inpMosaicBg" value="#ebe6df" />
 
           <label>Foreground color</label>
-          <input type="color" id="inpMosaicInk" value="#121212" />
+          <input type="color" id="inpMosaicInk" value="#e00000" />
+
+          <div class="only-stripe">
+            <label>Stripe accent color</label>
+            <input type="color" id="inpStripeAccent" value="#8a4300" />
+            <label>Texture file</label>
+            <input type="file" id="inpStripeTextureFile" accept="image/*" class="visually-hidden" tabindex="-1" />
+            <button type="button" class="btn-file" id="btnPickStripeTexture">Choose texture image…</button>
+            <p class="field-note" id="stripeTextureFileName">No texture file loaded</p>
+            <label class="check-row" style="margin-top:8px;">
+              <input type="checkbox" id="inpStripeTextureOn" checked />
+              Use texture on striped text
+            </label>
+            <label>Texture zoom <span id="valStripeTextureScale"></span>%</label>
+            <input type="range" id="inpStripeTextureScale" min="50" max="200" value="100" step="1" />
+            <p class="field-note">Zooms into the texture (center crop). Tiling uses this region only. 100% = full texture.</p>
+
+            <label class="check-row">
+              <input type="checkbox" id="inpStripeTextureLighten" />
+              Lighten texture
+            </label>
+            <p class="field-note">Brightens dark grain so the pattern reads more clearly on ink and accent bands.</p>
+
+            <label>Texture visibility <span id="valStripeTextureStrength"></span>%</label>
+            <input type="range" id="inpStripeTextureStrength" min="0" max="200" value="120" />
+            <p class="field-note">How strongly the texture modulates Striped block colors.</p>
+          </div>
         </div>
       </div>
 
@@ -138,15 +168,23 @@
 
       <div class="control-group">
         <h2>
-          Grid layout
+          <span class="mosaic-look-title only-mosaic-render">Mosaic look</span>
+          <span class="mosaic-look-title only-stripe">Striped block look</span>
+          <span class="mosaic-look-title only-offset">Look</span>
           <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
         </h2>
         <div class="control-group-body">
-          <p class="group-hint">Tile count and rasterization quality</p>
+          <p class="group-hint only-mosaic-render">Grid, tile edges, texture, and how tone maps into the grid.</p>
+          <p class="group-hint only-stripe">Banded text raster, then the same tile layout, edges, and tone mapping.</p>
+          <p class="group-hint only-offset">Grid, dot marks, spacing, and tone mapping.</p>
+
+          <h3 class="subgroup-heading">Grid layout</h3>
+          <p class="subgroup-hint">Tile count, padding, and sampling resolution</p>
           <label>Grid resolution <span id="valGridN"></span></label>
           <input type="range" id="inpGridN" min="4" max="120" value="52" step="1" />
+          <p class="field-note">Columns — rows follow preview aspect ratio.</p>
 
-          <div class="only-mosaic">
+          <div class="not-offset">
             <label>Cell shape</label>
             <select id="inpCellShape">
               <option value="square">1 : 1 — Square</option>
@@ -155,36 +193,28 @@
             </select>
             <p class="field-note">Tall/wide tiles sit inside each cell; ink is boosted to match visual weight.</p>
           </div>
-          <p class="field-note">Grid resolution is the number of columns — rows follow preview aspect ratio.</p>
 
           <label>Padding <span id="valPad"></span>px</label>
           <input type="range" id="inpPad" min="0" max="120" value="16" />
 
           <label>Sampling detail <span id="valSamplingDetail"></span> px/tile</label>
           <input type="range" id="inpSamplingDetail" min="2" max="12" value="6" step="1" />
-        </div>
-      </div>
 
-      <div class="control-group">
-        <h2>
-          <span class="mosaic-look-title only-mosaic">Mosaic look</span>
-          <span class="mosaic-look-title only-offset">Look</span>
-          <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
-        </h2>
-        <div class="control-group-body">
-          <p class="group-hint only-mosaic">Tile edges, texture, and tonal variation</p>
-          <p class="group-hint only-offset">Gutter, edge, spread, and contrast also affect offset dots</p>
+          <h3 class="subgroup-heading">Surface</h3>
+          <p class="subgroup-hint">Space between marks and edge falloff</p>
           <label>Gutter <span id="valGutter"></span>px</label>
           <input type="range" id="inpGutter" min="0" max="6" value="1" />
 
           <label>Edge softness <span id="valEdge"></span></label>
           <input type="range" id="inpEdge" min="0" max="100" value="65" />
 
-          <div class="only-mosaic">
+          <div class="not-offset">
             <label>Scratch density <span id="valGrain"></span></label>
             <input type="range" id="inpGrain" min="0" max="100" value="55" />
           </div>
 
+          <h3 class="subgroup-heading">Tone</h3>
+          <p class="subgroup-hint">How sampled ink spreads and thresholds</p>
           <label>Tone spread <span id="valSpread"></span></label>
           <input type="range" id="inpSpread" min="0" max="100" value="35" />
 
@@ -193,6 +223,19 @@
 
           <label>Fill threshold <span id="valThresh"></span></label>
           <input type="range" id="inpThresh" min="0" max="100" value="42" />
+
+          <div class="only-offset">
+            <h3 class="subgroup-heading">Offset dots</h3>
+            <p class="subgroup-hint">Halftone-style mark size, jitter, and shape mix</p>
+            <label>Offset dot gain <span id="valDotGain"></span>%</label>
+            <input type="range" id="inpDotGain" min="40" max="200" value="120" />
+
+            <label>Offset jitter <span id="valDotJitter"></span>%</label>
+            <input type="range" id="inpDotJitter" min="0" max="40" value="8" />
+
+            <label>Offset square mix <span id="valDotSquareMix"></span>%</label>
+            <input type="range" id="inpDotSquareMix" min="0" max="100" value="32" />
+          </div>
         </div>
       </div>
 

@@ -5,6 +5,15 @@
 let inkGrid = null;
 /** Loaded user image (p5.Image) when Input → Image is used. */
 let userImage = null;
+/** Optional print/paper texture asset used in Striped block text rendering. */
+let stripePrintTexture = null;
+/** Mean luminance of loaded stripe texture (0..1), used to center contrast. */
+let stripePrintTextureMean = 0.5;
+/**
+ * Tight pixel rect of visible content (alpha above threshold), computed once per load.
+ * Used so irregular / padded PNGs scale to fit the ink grid instead of tiny centered blobs.
+ */
+let userImageAlphaBounds = null;
 
 function getInputMode() {
   const tab = document.querySelector(".input-tab.is-active");
@@ -108,6 +117,7 @@ function setup() {
 function draw() {
   const p = readParams();
   if (p.renderMode === "offset") drawOffsetPrintScene(p, null, null);
+  else if (p.renderMode === "stripe" && p.inputMode === "text") drawStripedTextScene(p, null);
   else drawScene(p, null, null);
 }
 
@@ -126,7 +136,7 @@ function readParamsForCanvas(cw, ch) {
     text: (val("inpText") || "a").replace(/\r\n?/g, "\n"),
     cols: n,
     rows,
-    renderMode: val("inpRenderMode") || "mosaic",
+    renderMode: val("inpRenderMode") || "stripe",
     tilePrimitive: val("inpTilePrimitive") || "rect",
     cellShape: val("inpCellShape") || "square",
     pad,
@@ -141,6 +151,13 @@ function readParamsForCanvas(cw, ch) {
     dotSquareMix: constrain(num("inpDotSquareMix") / 100, 0, 1),
     mosaicBgHex: val("inpMosaicBg"),
     mosaicInkHex: val("inpMosaicInk"),
+    stripeAccentHex: val("inpStripeAccent") || "#8a4300",
+    stripeTextureOn: !!(g("inpStripeTextureOn") && g("inpStripeTextureOn").checked),
+    stripeTextureStrength: constrain(num("inpStripeTextureStrength") / 100, 0, 2),
+    stripeTextureScale: constrain(num("inpStripeTextureScale") / 100, 0.5, 2),
+    stripeTextureLighten: !!(g("inpStripeTextureLighten") && g("inpStripeTextureLighten").checked),
+    imageScale: constrain(num("inpImageScale") / 100, 0.5, 2),
+    imageLighten: !!(g("inpImageLighten") && g("inpImageLighten").checked),
     seed: num("inpSeed") | 0,
     fontScale: num("inpFontScale") / 100,
     fontStack: fontStackFor(val("inpFontFamily")),
@@ -154,12 +171,25 @@ function readParams() {
 
 function syncRenderModeUi() {
   const el = document.getElementById("inpRenderMode");
-  const mode = el && el.value === "offset" ? "offset" : "mosaic";
-  document.querySelectorAll(".only-mosaic").forEach((node) => {
-    node.style.display = mode === "mosaic" ? "" : "none";
+  const v = (el && el.value) || "mosaic";
+  const isOffset = v === "offset";
+  const isStripe = v === "stripe";
+  const isMosaic = v === "mosaic";
+
+  document.querySelectorAll(".not-offset").forEach((node) => {
+    node.style.display = isOffset ? "none" : "";
   });
   document.querySelectorAll(".only-offset").forEach((node) => {
-    node.style.display = mode === "offset" ? "" : "none";
+    node.style.display = isOffset ? "" : "none";
+  });
+  document.querySelectorAll(".only-stripe").forEach((node) => {
+    node.style.display = isStripe ? "" : "none";
+  });
+  document.querySelectorAll(".only-mosaic-render").forEach((node) => {
+    node.style.display = isMosaic ? "" : "none";
+  });
+  document.querySelectorAll(".not-stripe").forEach((node) => {
+    node.style.display = isStripe ? "none" : "";
   });
 }
 
@@ -185,6 +215,9 @@ function syncLabels() {
   set("valDotSquareMix", Math.round(p.dotSquareMix * 100));
   set("valFontScale", Math.round(p.fontScale * 100));
   set("valSamplingDetail", p.samplingDetail);
+  set("valStripeTextureStrength", Math.round(p.stripeTextureStrength * 100));
+  set("valStripeTextureScale", Math.round(p.stripeTextureScale * 100));
+  set("valImageScale", Math.round(p.imageScale * 100));
 }
 
 function bindControls() {
@@ -194,6 +227,13 @@ function bindControls() {
     "inpFontScale",
     "inpMosaicBg",
     "inpMosaicInk",
+    "inpStripeAccent",
+    "inpStripeTextureOn",
+    "inpStripeTextureScale",
+    "inpStripeTextureLighten",
+    "inpStripeTextureStrength",
+    "inpImageScale",
+    "inpImageLighten",
     "inpGridN",
     "inpExportScale",
     "inpRenderMode",
@@ -287,6 +327,15 @@ function bindControls() {
   applyMobileDefaults();
 
   // ── Input: Text / Image tabs ──
+  function applyInputTabVisibility(isImg) {
+    const textP = document.getElementById("panelInputText");
+    const imgP = document.getElementById("panelInputImage");
+    const extras = document.getElementById("imageInputExtras");
+    if (textP) textP.hidden = isImg;
+    if (imgP) imgP.hidden = !isImg;
+    if (extras) extras.hidden = !isImg;
+  }
+
   document.querySelectorAll(".input-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
       document.querySelectorAll(".input-tab").forEach((t) => {
@@ -294,15 +343,14 @@ function bindControls() {
         t.classList.toggle("is-active", on);
         t.setAttribute("aria-selected", on ? "true" : "false");
       });
-      const textP = document.getElementById("panelInputText");
-      const imgP = document.getElementById("panelInputImage");
       const isImg = tab.dataset.inputTab === "image";
-      if (textP) textP.hidden = isImg;
-      if (imgP) imgP.hidden = !isImg;
+      applyInputTabVisibility(isImg);
       syncLabels();
       regenerate();
     });
   });
+
+  applyInputTabVisibility(getInputMode() === "image");
 
   const pickBtn = document.getElementById("btnPickImage");
   const fileInp = document.getElementById("inpImageFile");
@@ -314,6 +362,7 @@ function bindControls() {
       if (!f) {
         if (nameEl) nameEl.textContent = "No file loaded";
         userImage = null;
+        userImageAlphaBounds = null;
         regenerate();
         return;
       }
@@ -324,13 +373,60 @@ function bindControls() {
         (img) => {
           URL.revokeObjectURL(url);
           userImage = img;
+          userImageAlphaBounds =
+            img && img.width > 0 ? computeImageContentBounds(img) : null;
           regenerate();
         },
         () => {
           URL.revokeObjectURL(url);
           userImage = null;
+          userImageAlphaBounds = null;
           if (nameEl) nameEl.textContent = "Could not load image";
           regenerate();
+        },
+      );
+    });
+  }
+
+  const pickTexBtn = document.getElementById("btnPickStripeTexture");
+  const texFileInp = document.getElementById("inpStripeTextureFile");
+  if (pickTexBtn && texFileInp) pickTexBtn.addEventListener("click", () => texFileInp.click());
+  if (texFileInp) {
+    texFileInp.addEventListener("change", () => {
+      const f = texFileInp.files && texFileInp.files[0];
+      const nameEl = document.getElementById("stripeTextureFileName");
+      if (!f) {
+        stripePrintTexture = null;
+        if (nameEl) nameEl.textContent = "No texture file loaded";
+        redraw();
+        return;
+      }
+      if (nameEl) nameEl.textContent = f.name;
+      const url = URL.createObjectURL(f);
+      loadImage(
+        url,
+        (img) => {
+          URL.revokeObjectURL(url);
+          stripePrintTexture = img;
+          stripePrintTexture.loadPixels();
+          // Compute mean luminance so texture modulation is centered (not global fade).
+          let sumL = 0;
+          const np = stripePrintTexture.width * stripePrintTexture.height;
+          for (let pi = 0; pi < np; pi++) {
+            const bi = pi * 4;
+            const tr = stripePrintTexture.pixels[bi];
+            const tg = stripePrintTexture.pixels[bi + 1];
+            const tb = stripePrintTexture.pixels[bi + 2];
+            sumL += (0.299 * tr + 0.587 * tg + 0.114 * tb) / 255;
+          }
+          stripePrintTextureMean = np > 0 ? sumL / np : 0.5;
+          redraw();
+        },
+        () => {
+          URL.revokeObjectURL(url);
+          stripePrintTexture = null;
+          if (nameEl) nameEl.textContent = "Could not load texture file";
+          redraw();
         },
       );
     });
@@ -357,6 +453,8 @@ function buildInkGrid(p) {
         p.rows,
         p.thresh,
         p.samplingDetail,
+        p.imageScale,
+        p.imageLighten,
       );
     }
     return emptyInkGrid(p.cols, p.rows);
@@ -410,6 +508,9 @@ function exportPng() {
   const g = createGraphics(ew, eh);
   g.pixelDensity(1);
   if (pDraw.renderMode === "offset") drawOffsetPrintScene(pDraw, g, grid);
+  else if (pDraw.renderMode === "stripe" && pDraw.inputMode === "text") {
+    drawStripedTextScene(pDraw, g);
+  }
   else drawScene(pDraw, g, grid);
   g.save("generative-font-" + Date.now() + ".png");
 }
@@ -499,6 +600,80 @@ function rasterBufferSize(cols, rows, samplingDetail) {
   return { pw, ph, pxPerCell };
 }
 
+/**
+ * Axis-aligned bounds of pixels with alpha above threshold (irregular silhouettes, logo padding).
+ * Falls back to full bitmap if nothing passes (e.g. fully transparent → treat as full frame).
+ */
+function computeImageContentBounds(img, alphaThreshold = 10) {
+  if (!img || img.width <= 0) {
+    return { sx: 0, sy: 0, sw: 1, sh: 1 };
+  }
+  img.loadPixels();
+  const w = img.width;
+  const h = img.height;
+  const pix = img.pixels;
+  const step = w * h > 4_000_000 ? 2 : 1;
+  let minX = w;
+  let minY = h;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < h; y += step) {
+    const rowBase = y * w * 4;
+    for (let x = 0; x < w; x += step) {
+      const a = pix[rowBase + x * 4 + 3];
+      if (a > alphaThreshold) {
+        const x2 = min(x + step - 1, w - 1);
+        const y2 = min(y + step - 1, h - 1);
+        if (x < minX) minX = x;
+        if (x2 > maxX) maxX = x2;
+        if (y < minY) minY = y;
+        if (y2 > maxY) maxY = y2;
+      }
+    }
+  }
+  if (maxX < 0) {
+    return { sx: 0, sy: 0, sw: w, sh: h };
+  }
+  return {
+    sx: minX,
+    sy: minY,
+    sw: max(1, maxX - minX + 1),
+    sh: max(1, maxY - minY + 1),
+  };
+}
+
+/** Uniform scale + center so source rect fits inside dw×dh (object-contain, letterbox on bg). */
+function drawImageContainSource(pg, img, dx, dy, dw, dh, sx, sy, sw, sh) {
+  if (!img || sw <= 0 || sh <= 0) return;
+  const ir = sw / sh;
+  const tr = dw / dh;
+  let tw;
+  let th;
+  if (ir > tr) {
+    tw = dw;
+    th = dw / ir;
+  } else {
+    th = dh;
+    tw = dh * ir;
+  }
+  const ox = dx + (dw - tw) / 2;
+  const oy = dy + (dh - th) / 2;
+  pg.image(img, ox, oy, tw, th, sx, sy, sw, sh);
+}
+
+function scaledSourceRect(sx, sy, sw, sh, scale, maxW, maxH) {
+  const s = constrain(Number(scale) || 1, 0.5, 2);
+  const tw = sw / s;
+  const th = sh / s;
+  const cx = sx + sw * 0.5;
+  const cy = sy + sh * 0.5;
+  const nsw = constrain(tw, 1, maxW);
+  const nsh = constrain(th, 1, maxH);
+  const nsx = constrain(cx - nsw * 0.5, 0, maxW - nsw);
+  const nsy = constrain(cy - nsh * 0.5, 0, maxH - nsh);
+  return { sx: nsx, sy: nsy, sw: nsw, sh: nsh };
+}
+
 /** Scale + center-crop image to fill dw×dh (object-cover). */
 function drawImageCover(pg, img, dx, dy, dw, dh) {
   if (!img || img.width <= 0) return;
@@ -524,20 +699,50 @@ function drawImageCover(pg, img, dx, dy, dw, dh) {
 
 /**
  * Sample a photo into [rows][cols] ink — same pipeline as text after rasterization.
+ * Padded / irregular alpha masks: fit tight content with contain. Full-bleed photos: cover.
  */
-function sampleInkGridFromImage(img, cols, rows, threshSoft, samplingDetail) {
+function sampleInkGridFromImage(img, cols, rows, threshSoft, samplingDetail, imageScale, imageLighten) {
   const { pw, ph } = rasterBufferSize(cols, rows, samplingDetail);
   const pg = createGraphics(pw, ph);
   pg.pixelDensity(1);
   pg.background(255);
-  drawImageCover(pg, img, 0, 0, pw, ph);
+  const w = img.width;
+  const h = img.height;
+  const b =
+    userImageAlphaBounds &&
+    userImageAlphaBounds.sw > 0 &&
+    userImageAlphaBounds.sh > 0
+      ? userImageAlphaBounds
+      : computeImageContentBounds(img);
+  const contentFrac = (b.sw * b.sh) / max(1, w * h);
+  const FRAC_FULL_BLEED = 0.88;
+  if (contentFrac >= FRAC_FULL_BLEED) {
+    const r = scaledSourceRect(0, 0, img.width, img.height, imageScale, img.width, img.height);
+    pg.image(img, 0, 0, pw, ph, r.sx, r.sy, r.sw, r.sh);
+  } else {
+    const r = scaledSourceRect(b.sx, b.sy, b.sw, b.sh, imageScale, img.width, img.height);
+    drawImageContainSource(pg, img, 0, 0, pw, ph, r.sx, r.sy, r.sw, r.sh);
+  }
+  if (imageLighten) {
+    pg.noStroke();
+    pg.fill(255, 255, 255, 64);
+    pg.rect(0, 0, pw, ph);
+  }
   return collapseRasterToInkGrid(pg, cols, rows, threshSoft);
 }
 
 /**
  * Rasterize text to a buffer and collapse to [rows][cols] ink in 0..1.
  */
-function sampleInkGrid(str, cols, rows, threshSoft, fontScale, samplingDetail, familyListCSS) {
+function sampleInkGrid(
+  str,
+  cols,
+  rows,
+  threshSoft,
+  fontScale,
+  samplingDetail,
+  familyListCSS,
+) {
   const { pw, ph } = rasterBufferSize(cols, rows, samplingDetail);
   const pg = createGraphics(pw, ph);
   pg.pixelDensity(1);
@@ -555,6 +760,283 @@ function sampleInkGrid(str, cols, rows, threshSoft, fontScale, samplingDetail, f
   fitTextToBuffer(pg, lines, pw, ph, sizeGuess, familyListCSS);
   drawRasterText(pg, display, pw, ph, familyListCSS);
   return collapseRasterToInkGrid(pg, cols, rows, threshSoft);
+}
+
+const STRIPE_GLYPH_W = 7;
+const STRIPE_GLYPH_H = 13;
+const STRIPE_ADV_X = 8;
+const STRIPE_ADV_Y = 15;
+const STRIPE_FONT = {
+  "A": [".#####.","###.###","###.###","###.###","###.###","###.###","#######","###.###","###.###","###.###","###.###",".......","......."],
+  "B": ["######.","###.###","###.###","###.###","######.","######.","###.###","###.###","###.###","###.###","######.",".......","......."],
+  "C": [".######","###.###","###....","###....","###....","###....","###....","###....","###....","###.###",".######",".......","......."],
+  "D": ["#####..","###.##.","###.###","###.###","###.###","###.###","###.###","###.###","###.###","###.##.","#####..",".......","......."],
+  "E": ["#######","###....","###....","###....","######.","###....","###....","###....","###....","###....","#######",".......","......."],
+  "F": ["#######","###....","###....","###....","######.","###....","###....","###....","###....","###....","###....",".......","......."],
+  "G": [".#####.","###.###","###....","###....","###....","###.###","###.###","###.###","###.###","###.###",".#####.",".......","......."],
+  "H": ["###.###","###.###","###.###","###.###","###.###","#######","###.###","###.###","###.###","###.###","###.###",".......","......."],
+  "I": ["#######","..###..","..###..","..###..","..###..","..###..","..###..","..###..","..###..","..###..","#######",".......","......."],
+  "J": ["..#####","....###","....###","....###","....###","....###","....###","....###","###.###","###.###",".#####.",".......","......."],
+  "K": ["###.###","###.###","###.##.","######.","#####..","#####..","######.","###.##.","###.###","###.###","###.###",".......","......."],
+  "L": ["###....","###....","###....","###....","###....","###....","###....","###....","###....","###....","#######",".......","......."],
+  "M": ["###.###","#######","#######","#######","###.###","###.###","###.###","###.###","###.###","###.###","###.###",".......","......."],
+  "N": ["###.###","####.##","#######","#######","##.####","###.###","###.###","###.###","###.###","###.###","###.###",".......","......."],
+  "O": [".#####.","###.###","###.###","###.###","###.###","###.###","###.###","###.###","###.###","###.###",".#####.",".......","......."],
+  "P": ["######.","###.###","###.###","###.###","###.###","######.","###....","###....","###....","###....","###....",".......","......."],
+  "Q": [".#####.","###.###","###.###","###.###","###.###","###.###","###.###","###.###","###.###",".######","..#####",".......","......."],
+  "R": ["######.","###.###","###.###","###.###","###.###","######.","######.","###.##.","###.###","###.###","###.###",".......","......."],
+  "S": [".######","###.###","###....","###....",".#####.","....###","....###","....###","....###","###.###","######.",".......","......."],
+  "T": ["#######","..###..","..###..","..###..","..###..","..###..","..###..","..###..","..###..","..###..","..###..",".......","......."],
+  "U": ["###.###","###.###","###.###","###.###","###.###","###.###","###.###","###.###","###.###","###.###",".#####.",".......","......."],
+  "V": ["###.###","###.###","###.###","###.###","###.###","###.###","###.###","###.###",".#####.","..###..","...#...",".......","......."],
+  "W": ["###.###","###.###","###.###","###.###","###.###","###.###","###.###","#######","#######","#######","###.###",".......","......."],
+  "X": ["###.###","###.###",".##.##.","..###..","..###..","..###..","..###..",".##.##.","###.###","###.###","###.###",".......","......."],
+  "Y": ["###.###","###.###","###.###",".#####.","..###..","..###..","..###..","..###..","..###..","..###..","..###..",".......","......."],
+  "Z": ["#######","....###","....###","...###.","..###..","..###..",".###...","###....","###....","###....","#######",".......","......."],
+  "0": [".#####.","###.###","###.###","##..###","##.#.##","###..##","###.###","###.###","###.###","###.###",".#####.",".......","......."],
+  "1": ["..###..","..###..",".####..","..###..","..###..","..###..","..###..","..###..","..###..","..###..","..###..",".......","......."],
+  "2": [".#####.","###.###","....###","....###","...###.","..###..",".###...","###....","###....","###....","#######",".......","......."],
+  "3": ["######.","....###","....###","....###",".#####.","....###","....###","....###","....###","....###","######.",".......","......."],
+  "4": ["....###","...####","..#.###",".#..###","#...###","#######","....###","....###","....###","....###","....###",".......","......."],
+  "5": ["#######","###....","###....","###....","######.","....###","....###","....###","....###","....###","######.",".......","......."],
+  "6": [".#####.","###....","###....","###....","######.","###.###","###.###","###.###","###.###","###.###",".#####.",".......","......."],
+  "7": ["#######","....###","....###","...###.","...###.","..###..","..###..",".###...",".###...",".###...",".###...",".......","......."],
+  "8": [".#####.","###.###","###.###","###.###",".#####.","###.###","###.###","###.###","###.###","###.###",".#####.",".......","......."],
+  "9": [".#####.","###.###","###.###","###.###","###.###",".######","....###","....###","....###","....###",".#####.",".......","......."],
+  "?": [".#####.","###.###","....###","...###.","..###..","..###..","..###..",".......",".......","..###..","..###..",".......","......."],
+  "!": ["..###..","..###..","..###..","..###..","..###..","..###..","..###..","..###..",".......",".......","..###..",".......","......."],
+  "-": [".......",".......",".......",".......",".......","#####..",".......",".......",".......",".......",".......",".......",".......",],
+  ".": [".......",".......",".......",".......",".......",".......",".......",".......",".......",".......","..###..",".......","......."],
+  ",": [".......",".......",".......",".......",".......",".......",".......",".......",".......",".......","..###..","..##...",".......",],
+  " ": [".......",".......",".......",".......",".......",".......",".......",".......",".......",".......",".......",".......",".......",],
+};
+
+function stripeGlyphFor(ch) {
+  if (!ch || ch === " ") return STRIPE_FONT[" "];
+  const up = ch.toUpperCase();
+  return STRIPE_FONT[up] || STRIPE_FONT["?"];
+}
+
+function drawStripePixel(ctx, x, y, w, h, fillCol) {
+  if (ctx) {
+    ctx.fill(fillCol);
+    ctx.rect(x, y, w, h);
+  } else {
+    fill(fillCol);
+    rect(x, y, w, h);
+  }
+}
+
+/**
+ * Render mode: handcrafted striped block alphabet (A-Z/0-9), edge-striped like reference.
+ * Only used when Input=Text and Render mode=Striped block.
+ */
+function drawStripedTextScene(p, ctx) {
+  const W = ctx ? ctx.width : width;
+  const H = ctx ? ctx.height : height;
+  const bgHex = p.mosaicBgHex;
+  const dark = color(p.mosaicInkHex);
+  const paper = color(p.mosaicBgHex);
+  const accent = color(p.stripeAccentHex || "#e38953");
+
+  if (ctx) {
+    ctx.background(bgHex);
+    ctx.noStroke();
+  } else {
+    background(bgHex);
+    noStroke();
+  }
+  // Striped mode uses its own texture compositing; avoid stacking generic paper overlay.
+
+  const input = (p.text || "").trim().length ? p.text : "HARD";
+  const lines = input.split(/\n/).map((l) => l.replace(/\r/g, ""));
+  const lineWUnits = lines.map((line) => {
+    const count = max(1, line.length);
+    return count * STRIPE_ADV_X - (STRIPE_ADV_X - STRIPE_GLYPH_W);
+  });
+  const textUnitsW = max(1, ...lineWUnits);
+  const textUnitsH = max(1, lines.length * STRIPE_ADV_Y - (STRIPE_ADV_Y - STRIPE_GLYPH_H));
+
+  const fs = constrain(Number(p.fontScale) || 1, 0.35, 2.4);
+  const fitX = (W * 0.8) / textUnitsW;
+  const fitY = (H * 0.58) / textUnitsH;
+  const block = constrain(floor(min(fitX, fitY) * fs), 2, 40);
+
+  const drawW = textUnitsW * block;
+  const drawH = textUnitsH * block;
+  const ox = floor((W - drawW) * 0.5);
+  const oy = floor((H - drawH) * 0.5);
+
+  const occ = new Uint8Array(textUnitsW * textUnitsH);
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    const lineW = lineWUnits[li];
+    const xBase = floor((textUnitsW - lineW) * 0.5);
+    const yBase = li * STRIPE_ADV_Y;
+    for (let ci = 0; ci < max(1, line.length); ci++) {
+      const ch = line.length ? line[ci] : " ";
+      const g = stripeGlyphFor(ch);
+      const gx = xBase + ci * STRIPE_ADV_X;
+      for (let gy = 0; gy < STRIPE_GLYPH_H; gy++) {
+        const row = g[gy] || ".....";
+        const yy = yBase + gy;
+        if (yy < 0 || yy >= textUnitsH) continue;
+        for (let xx = 0; xx < STRIPE_GLYPH_W; xx++) {
+          if (row[xx] !== "#") continue;
+          const x = gx + xx;
+          if (x < 0 || x >= textUnitsW) continue;
+          occ[yy * textUnitsW + x] = 1;
+        }
+      }
+    }
+  }
+
+  const cellW = block;
+  const darkCoreW = constrain(floor(cellW * 0.52), 1, max(1, cellW - 1));
+  const seed = p.seed | 0;
+  const texImg = stripePrintTexture;
+  const texW = texImg && texImg.width > 0 ? texImg.width : 0;
+  const texH = texImg && texImg.height > 0 ? texImg.height : 0;
+  const texStrength = p.stripeTextureOn ? p.stripeTextureStrength : 0;
+  const texCrop =
+    texW > 0 && texH > 0 ? scaledSourceRect(0, 0, texW, texH, p.stripeTextureScale, texW, texH) : null;
+  let texCropX0 = 0;
+  let texCropY0 = 0;
+  let texCropRw = 1;
+  let texCropRh = 1;
+  if (texCrop) {
+    texCropX0 = constrain(floor(texCrop.sx), 0, max(0, texW - 1));
+    texCropY0 = constrain(floor(texCrop.sy), 0, max(0, texH - 1));
+    texCropRw = max(1, min(floor(texCrop.sw), texW - texCropX0));
+    texCropRh = max(1, min(floor(texCrop.sh), texH - texCropY0));
+  }
+  const orangeMask = createGraphics(drawW, drawH);
+  const blackMask = createGraphics(drawW, drawH);
+  const art = createGraphics(drawW, drawH);
+  orangeMask.pixelDensity(1);
+  blackMask.pixelDensity(1);
+  art.pixelDensity(1);
+  orangeMask.clear();
+  blackMask.clear();
+  art.clear();
+  orangeMask.noStroke();
+  blackMask.noStroke();
+  orangeMask.fill(255);
+  blackMask.fill(255);
+
+  for (let y = 0; y < textUnitsH; y++) {
+    let x = 0;
+    while (x < textUnitsW) {
+      if (!occ[y * textUnitsW + x]) { x++; continue; }
+      let runStart = x;
+      while (x < textUnitsW && occ[y * textUnitsW + x]) x++;
+      let runEnd = x - 1;
+
+      for (let rx = runStart; rx <= runEnd; rx++) {
+        const isLeftEdge = rx === runStart;
+        const isRightEdge = rx === runEnd;
+        const lx = rx * block;
+        const ly = y * block;
+        orangeMask.rect(lx, ly, cellW, block);
+        if (isLeftEdge) blackMask.rect(lx, ly, darkCoreW, block);
+        if (isRightEdge) blackMask.rect(lx + cellW - darkCoreW, ly, darkCoreW, block);
+      }
+    }
+  }
+
+  orangeMask.loadPixels();
+  blackMask.loadPixels();
+  art.loadPixels();
+  const pw = paper.levels[0];
+  const pg = paper.levels[1];
+  const pb = paper.levels[2];
+  const ar = accent.levels[0];
+  const ag = accent.levels[1];
+  const ab = accent.levels[2];
+  const dr = dark.levels[0];
+  const dg = dark.levels[1];
+  const db = dark.levels[2];
+
+  let texSignedMin = 999;
+  let texSignedMax = -999;
+  let texSignedSum = 0;
+  let texSignedCount = 0;
+  for (let y = 0; y < drawH; y++) {
+    for (let x = 0; x < drawW; x++) {
+      const idx = 4 * (y * drawW + x);
+      const oa = orangeMask.pixels[idx + 3];
+      const ba = blackMask.pixels[idx + 3];
+      if (oa < 1 && ba < 1) continue;
+
+      const wx = ox + x;
+      const wy = oy + y;
+      const micro = noise(wx * 0.42 + 11.8, wy * 0.42 + 29.6, seed * 0.071);
+      const speck = noise(wx * 0.14 + 61.2, wy * 0.14 + 14.9, seed * 0.021);
+      let texL = 0.5;
+      if (texStrength > 0 && texW > 0 && texH > 0 && texImg.pixels && texImg.pixels.length > 0 && texCrop) {
+        const tx = texCropX0 + ((floor(wx) % texCropRw) + texCropRw) % texCropRw;
+        const ty = texCropY0 + ((floor(wy) % texCropRh) + texCropRh) % texCropRh;
+        const tidx = 4 * (ty * texW + tx);
+        const tr = texImg.pixels[tidx];
+        const tg = texImg.pixels[tidx + 1];
+        const tb = texImg.pixels[tidx + 2];
+        texL = (0.299 * tr + 0.587 * tg + 0.114 * tb) / 255;
+        if (p.stripeTextureLighten) texL = min(1, texL * 0.72 + 0.28);
+      }
+      // Emphasize contrast from texture around its own average luminance.
+      const texSigned = (texL - stripePrintTextureMean) * 3.2 * texStrength;
+      if (texSigned < texSignedMin) texSignedMin = texSigned;
+      if (texSigned > texSignedMax) texSignedMax = texSigned;
+      texSignedSum += texSigned;
+      texSignedCount++;
+
+      let r;
+      let g;
+      let b;
+
+      if (ba > 0) {
+        const inkLift = max(0, speck - 0.86) * 0.28 * texStrength;
+        r = dr + texSigned * 30;
+        g = dg + texSigned * 30;
+        b = db + texSigned * 30;
+        const whiteDrop =
+          max(0, micro - 0.82) * 0.9 * texStrength +
+          max(0, speck - 0.94) * 0.55 * texStrength;
+        r = lerp(r, pw, whiteDrop);
+        g = lerp(g, pg, whiteDrop);
+        b = lerp(b, pb, whiteDrop);
+        r = lerp(r, pw, inkLift);
+        g = lerp(g, pg, inkLift);
+        b = lerp(b, pb, inkLift);
+      } else {
+        const paperShow = max(0, speck - 0.88) * 0.22 * texStrength;
+        r = ar + texSigned * 36;
+        g = ag + texSigned * 36;
+        b = ab + texSigned * 36;
+        const whiteSpeck =
+          max(0, micro - 0.79) * 0.52 * texStrength +
+          max(0, speck - 0.92) * 0.32 * texStrength;
+        const darkSpeck = max(0, 0.13 - micro) * 0.2 * texStrength;
+        r = lerp(r, pw, whiteSpeck);
+        g = lerp(g, pg, whiteSpeck);
+        b = lerp(b, pb, whiteSpeck);
+        r = lerp(r, dr, darkSpeck);
+        g = lerp(g, dg, darkSpeck);
+        b = lerp(b, db, darkSpeck);
+        r = lerp(r, pw, paperShow);
+        g = lerp(g, pg, paperShow);
+        b = lerp(b, pb, paperShow);
+      }
+
+      art.pixels[idx] = constrain(r, 0, 255);
+      art.pixels[idx + 1] = constrain(g, 0, 255);
+      art.pixels[idx + 2] = constrain(b, 0, 255);
+      art.pixels[idx + 3] = 255;
+    }
+  }
+  art.updatePixels();
+  if (ctx) ctx.image(art, ox, oy);
+  else image(art, ox, oy);
 }
 
 function neighborEdge(grid, i, j, cols, rows) {
@@ -632,6 +1114,88 @@ function applyToneContrast(t, contrast01) {
   if (contrast01 < 0.001) return t;
   const k = 1 + contrast01 * 2.35;
   return constrain((t - 0.5) * k + 0.5, 0, 1);
+}
+
+const TEXTURE_GLYPHS = "0123456789ABCDEFXYZ@#$%&*+=?|/\\08BO";
+
+function canvas2dFromP5(ctx) {
+  if (ctx) return ctx.drawingContext;
+  return typeof drawingContext !== "undefined" ? drawingContext : null;
+}
+
+/**
+ * Low-contrast data-like glyph field, soft radial vignette, and fine grain.
+ * Drawn on top of solid paper; same for mosaic, offset, preview, and export.
+ */
+function drawPaperTextureOverlay(paperHex, inkHex, W, H, seed, ctx) {
+  const paper = color(paperHex);
+  const inkC = color(inkHex);
+  const dctx = canvas2dFromP5(ctx);
+  if (!dctx || W < 2 || H < 2) return;
+
+  const pr = red(paper);
+  const pg = green(paper);
+  const pb = blue(paper);
+
+  dctx.save();
+
+  const cx = W * 0.5;
+  const cy = H * 0.5;
+  const rad = max(W, H) * 0.82;
+  const rg = dctx.createRadialGradient(cx, cy, rad * 0.06, cx, cy, rad);
+  const lr = lerp(pr, 255, 0.055);
+  const lg = lerp(pg, 255, 0.055);
+  const lb = lerp(pb, 255, 0.055);
+  const dr = lerp(pr, 0, 0.15);
+  const dg = lerp(pg, 0, 0.15);
+  const db = lerp(pb, 0, 0.15);
+  rg.addColorStop(0, `rgba(${lr},${lg},${lb},0.38)`);
+  rg.addColorStop(0.5, `rgba(${pr},${pg},${pb},0)`);
+  rg.addColorStop(1, `rgba(${dr},${dg},${db},0.44)`);
+  dctx.fillStyle = rg;
+  dctx.fillRect(0, 0, W, H);
+
+
+  const targetGlyphs = 8200;
+  let step = floor(sqrt((W * H) / targetGlyphs));
+  step = constrain(step, 7, 24);
+  const tr = lerp(pr, red(inkC), 0.1);
+  const tg = lerp(pg, green(inkC), 0.1);
+  const tb = lerp(pb, blue(inkC), 0.1);
+  dctx.fillStyle = `rgba(${tr},${tg},${tb},0.24)`;
+  dctx.textAlign = "center";
+  dctx.textBaseline = "middle";
+  const fontPx = constrain(round(step * 0.72), 6, 11);
+  dctx.font = `${fontPx}px ui-monospace, "Courier New", monospace`;
+
+  const nG = TEXTURE_GLYPHS.length;
+  const s = seed | 0;
+  for (let y = step * 0.5; y < H; y += step) {
+    const gj = (y / step) | 0;
+    for (let x = step * 0.5; x < W; x += step) {
+      const gi = (x / step) | 0;
+      const h = (gi * 73856093 ^ gj * 668265263 ^ s * 1442695041) >>> 0;
+      const ch = TEXTURE_GLYPHS[h % nG];
+      const jx = (sin(gi * 1.17 + s * 0.017) + sin(gj * 0.93)) * 0.7;
+      const jy = (cos(gj * 1.09) + cos(gi * 0.88 + s * 0.023)) * 0.7;
+      dctx.fillText(ch, x + jx, y + jy);
+    }
+  }
+
+  randomSeed(s + 917733);
+  const nSpeck = constrain(floor((W * H) / 1600), 100, 16000);
+  for (let k = 0; k < nSpeck; k++) {
+    const px = floor(random() * W);
+    const py = floor(random() * H);
+    if (random() > 0.5) {
+      dctx.fillStyle = "rgba(0,0,0,0.04)";
+    } else {
+      dctx.fillStyle = "rgba(255,255,255,0.03)";
+    }
+    dctx.fillRect(px, py, 1, 1);
+  }
+
+  dctx.restore();
 }
 
 /**
@@ -713,6 +1277,8 @@ function drawOffsetPrintScene(p, ctx, gridOverride) {
     ellipseMode(CENTER);
   }
 
+  drawPaperTextureOverlay(p.mosaicBgHex, p.mosaicInkHex, W, H, p.seed, ctx);
+
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
       let ink = grid[j][i];
@@ -788,6 +1354,8 @@ function drawScene(p, ctx, gridOverride) {
     background(p.mosaicBgHex);
     noStroke();
   }
+
+  drawPaperTextureOverlay(p.mosaicBgHex, p.mosaicInkHex, W, H, p.seed, ctx);
 
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
