@@ -44,22 +44,27 @@
             <option value="mosaic">Mosaic cells</option>
             <option value="offset">Offset dots</option>
           </select>
-          <p class="field-note">Offset dots: tone is mostly mark size (halftone-like), not tile color blending.</p>
+          <p class="field-note only-mosaic">Mosaic: filled tiles, optional scratches, tile primitive &amp; cell shape.</p>
+          <p class="field-note only-offset">Offset: tone is mostly mark size (halftone-like), not tile fill blending.</p>
 
-          <label>Tile primitive (mosaic)</label>
-          <select id="inpTilePrimitive">
-            <option value="rect">Rectangle</option>
-            <option value="circle">Circle</option>
-          </select>
+          <div class="only-mosaic">
+            <label>Tile primitive</label>
+            <select id="inpTilePrimitive">
+              <option value="rect">Rectangle</option>
+              <option value="circle">Circle</option>
+            </select>
+          </div>
 
-          <label>Offset dot gain <span id="valDotGain"></span>%</label>
-          <input type="range" id="inpDotGain" min="40" max="200" value="120" />
+          <div class="only-offset">
+            <label>Offset dot gain <span id="valDotGain"></span>%</label>
+            <input type="range" id="inpDotGain" min="40" max="200" value="120" />
 
-          <label>Offset jitter <span id="valDotJitter"></span>%</label>
-          <input type="range" id="inpDotJitter" min="0" max="40" value="8" />
+            <label>Offset jitter <span id="valDotJitter"></span>%</label>
+            <input type="range" id="inpDotJitter" min="0" max="40" value="8" />
 
-          <label>Offset square mix <span id="valDotSquareMix"></span>%</label>
-          <input type="range" id="inpDotSquareMix" min="0" max="100" value="32" />
+            <label>Offset square mix <span id="valDotSquareMix"></span>%</label>
+            <input type="range" id="inpDotSquareMix" min="0" max="100" value="32" />
+          </div>
         </div>
       </div>
 
@@ -97,7 +102,7 @@
           <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
         </h2>
         <div class="control-group-body">
-          <p class="group-hint">Preview is what you see; export can be larger (same aspect ratio keeps the same grid).</p>
+          <p class="group-hint">Preview is what you see. Export scale multiplies preview width and height (capped at 8192 px per side).</p>
           <label>Preview size (px)</label>
           <div class="row row-dims">
             <input type="number" id="inpCanvasW" value="800" min="200" max="4096" step="1" />
@@ -105,13 +110,13 @@
             <input type="number" id="inpCanvasH" value="800" min="200" max="4096" step="1" />
           </div>
 
-          <label>Export size (px)</label>
-          <div class="row row-dims">
-            <input type="number" id="inpExportW" value="1600" min="200" max="8192" step="1" />
-            <span class="dim-sep">×</span>
-            <input type="number" id="inpExportH" value="1600" min="200" max="8192" step="1" />
-          </div>
-          <p class="field-note">If preview and export aspect ratios differ, row count changes and the mosaic is re-sampled for export.</p>
+          <label>Export scale</label>
+          <select id="inpExportScale">
+            <option value="1">×1 — same as preview</option>
+            <option value="2" selected>×2</option>
+            <option value="3">×3</option>
+          </select>
+          <p class="field-note">Export file: <span id="valExportDims">—</span> px</p>
         </div>
       </div>
 
@@ -125,13 +130,16 @@
           <label>Grid resolution <span id="valGridN"></span></label>
           <input type="range" id="inpGridN" min="4" max="120" value="52" step="1" />
 
-          <label>Cell shape</label>
-          <select id="inpCellShape">
-            <option value="square">1 : 1 — Square</option>
-            <option value="tall">1 : 2 — Tall rectangle</option>
-            <option value="wide">2 : 1 — Wide rectangle</option>
-          </select>
-          <p class="field-note">Tall/wide tiles sit inside each cell; ink is boosted to match visual weight. Grid resolution is the number of columns — rows auto-adjust to match canvas proportions.</p>
+          <div class="only-mosaic">
+            <label>Cell shape</label>
+            <select id="inpCellShape">
+              <option value="square">1 : 1 — Square</option>
+              <option value="tall">1 : 2 — Tall rectangle</option>
+              <option value="wide">2 : 1 — Wide rectangle</option>
+            </select>
+            <p class="field-note">Tall/wide tiles sit inside each cell; ink is boosted to match visual weight.</p>
+          </div>
+          <p class="field-note">Grid resolution is the number of columns — rows follow preview aspect ratio.</p>
 
           <label>Padding <span id="valPad"></span>px</label>
           <input type="range" id="inpPad" min="0" max="120" value="16" />
@@ -143,19 +151,23 @@
 
       <div class="control-group">
         <h2>
-          Mosaic look
+          <span class="mosaic-look-title only-mosaic">Mosaic look</span>
+          <span class="mosaic-look-title only-offset">Look</span>
           <svg class="chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
         </h2>
         <div class="control-group-body">
-          <p class="group-hint">Tile edges, texture, and tonal variation</p>
+          <p class="group-hint only-mosaic">Tile edges, texture, and tonal variation</p>
+          <p class="group-hint only-offset">Gutter, edge, spread, and contrast also affect offset dots</p>
           <label>Gutter <span id="valGutter"></span>px</label>
           <input type="range" id="inpGutter" min="0" max="6" value="1" />
 
           <label>Edge softness <span id="valEdge"></span></label>
           <input type="range" id="inpEdge" min="0" max="100" value="65" />
 
-          <label>Scratch density <span id="valGrain"></span></label>
-          <input type="range" id="inpGrain" min="0" max="100" value="55" />
+          <div class="only-mosaic">
+            <label>Scratch density <span id="valGrain"></span></label>
+            <input type="range" id="inpGrain" min="0" max="100" value="55" />
+          </div>
 
           <label>Tone spread <span id="valSpread"></span></label>
           <input type="range" id="inpSpread" min="0" max="100" value="35" />

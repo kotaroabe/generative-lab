@@ -64,11 +64,19 @@ function readCanvasSize() {
   };
 }
 
+function readExportScale() {
+  const el = document.getElementById("inpExportScale");
+  const s = Math.round(Number(el && el.value));
+  return constrain(Number.isFinite(s) ? s : 2, 1, 3);
+}
+
+/** Export dimensions = preview × scale (each side clamped to 8192). */
 function readExportSize() {
-  const g = (id) => document.getElementById(id);
+  const { w: pw, h: ph } = readCanvasSize();
+  const s = readExportScale();
   return {
-    w: clampCanvasDim(g("inpExportW").value, 8192),
-    h: clampCanvasDim(g("inpExportH").value, 8192),
+    w: constrain(Math.round(pw * s), 200, 8192),
+    h: constrain(Math.round(ph * s), 200, 8192),
   };
 }
 
@@ -136,12 +144,26 @@ function readParams() {
   return readParamsForCanvas(width, height);
 }
 
+function syncRenderModeUi() {
+  const el = document.getElementById("inpRenderMode");
+  const mode = el && el.value === "offset" ? "offset" : "mosaic";
+  document.querySelectorAll(".only-mosaic").forEach((node) => {
+    node.style.display = mode === "mosaic" ? "" : "none";
+  });
+  document.querySelectorAll(".only-offset").forEach((node) => {
+    node.style.display = mode === "offset" ? "" : "none";
+  });
+}
+
 function syncLabels() {
   const p = readParams();
   const set = (id, v) => {
     const el = document.getElementById(id);
     if (el) el.textContent = typeof v === "number" ? String(Math.round(v)) : v;
   };
+  const ex = readExportSize();
+  set("valExportDims", `${ex.w} × ${ex.h}`);
+  syncRenderModeUi();
   set("valGridN", `${p.cols} × ${p.rows}`);
   set("valPad", p.pad);
   set("valGutter", p.gutter);
@@ -165,8 +187,7 @@ function bindControls() {
     "inpMosaicBg",
     "inpMosaicInk",
     "inpGridN",
-    "inpExportW",
-    "inpExportH",
+    "inpExportScale",
     "inpRenderMode",
     "inpTilePrimitive",
     "inpCellShape",
@@ -190,6 +211,12 @@ function bindControls() {
   ids.forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
+    if (id === "inpExportScale") {
+      const onScale = () => syncLabels();
+      el.addEventListener("input", onScale);
+      el.addEventListener("change", onScale);
+      return;
+    }
     el.addEventListener("input", onChange);
     el.addEventListener("change", onChange);
   });
@@ -199,12 +226,6 @@ function bindControls() {
     g("inpCanvasH").value = String(clampCanvasDim(g("inpCanvasH").value, 4096));
     resizeCanvasFromInputs();
   };
-  const commitExportSize = () => {
-    const g = (id) => document.getElementById(id);
-    g("inpExportW").value = String(clampCanvasDim(g("inpExportW").value, 8192));
-    g("inpExportH").value = String(clampCanvasDim(g("inpExportH").value, 8192));
-    syncLabels();
-  };
   ["inpCanvasW", "inpCanvasH"].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -213,17 +234,6 @@ function bindControls() {
       if (e.key === "Enter") {
         e.preventDefault();
         commitCanvasSize();
-      }
-    });
-  });
-  ["inpExportW", "inpExportH"].forEach((id) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.addEventListener("change", commitExportSize);
-    el.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        commitExportSize();
       }
     });
   });
