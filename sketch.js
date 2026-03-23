@@ -7,6 +7,10 @@ let inkGrid = null;
 let userImage = null;
 /** Optional print/paper texture asset used in Striped block text rendering. */
 let stripePrintTexture = null;
+/** Stripe animation: running y-offset in pixels (incremented each draw frame). */
+let stripeAnimOffset = 0;
+/** Cached mask graphics for stripe rendering — rebuilt only when text/layout changes. */
+let _stripeCache = null;
 /** Mean luminance of loaded stripe texture (0..1), used to center contrast. */
 let stripePrintTextureMean = 0.5;
 /** Bundled paper texture; loaded in preload. */
@@ -167,8 +171,12 @@ function setup() {
 
 function draw() {
   const p = readParams();
+  const isStripeText = p.renderMode === "stripe" && p.inputMode === "text";
+  if (isStripeText && p.stripeAnimate) {
+    stripeAnimOffset = (stripeAnimOffset + p.stripeAnimSpeed * 0.5) % 100000;
+  }
   if (p.renderMode === "offset") drawOffsetPrintScene(p, null, null);
-  else if (p.renderMode === "stripe" && p.inputMode === "text") drawStripedTextScene(p, null);
+  else if (isStripeText) drawStripedTextScene(p, null);
   else drawScene(p, null, null);
 }
 
@@ -207,6 +215,8 @@ function readParamsForCanvas(cw, ch) {
     stripeTextureStrength: constrain(num("inpStripeTextureStrength") / 100, 0, 2),
     stripeTextureScale: constrain(num("inpStripeTextureScale") / 100, 0.5, 2),
     stripeTextureLighten: !!(g("inpStripeTextureLighten") && g("inpStripeTextureLighten").checked),
+    stripeAnimate: !!(g("inpStripeAnimate") && g("inpStripeAnimate").checked),
+    stripeAnimSpeed: constrain(num("inpStripeAnimSpeed"), 1, 20),
     imageScale: constrain(num("inpImageScale") / 100, 0.5, 2),
     imageLighten: !!(g("inpImageLighten") && g("inpImageLighten").checked),
     seed: num("inpSeed") | 0,
@@ -267,6 +277,7 @@ function syncLabels() {
   set("valFontScale", Math.round(p.fontScale * 100));
   set("valSamplingDetail", p.samplingDetail);
   set("valStripeTextureStrength", Math.round(p.stripeTextureStrength * 100));
+  set("valStripeAnimSpeed", p.stripeAnimSpeed);
   set("valStripeTextureScale", Math.round(p.stripeTextureScale * 100));
   set("valImageScale", Math.round(p.imageScale * 100));
 }
@@ -437,6 +448,27 @@ function bindControls() {
         },
       );
     });
+  }
+
+  // ── Stripe animation toggle ──
+  const animChk = document.getElementById("inpStripeAnimate");
+  const animSpeedGroup = document.getElementById("stripeAnimSpeedGroup");
+  const animSpeedRange = document.getElementById("inpStripeAnimSpeed");
+  if (animChk) {
+    animChk.addEventListener("change", () => {
+      const on = animChk.checked;
+      if (animSpeedGroup) animSpeedGroup.hidden = !on;
+      if (on) {
+        stripeAnimOffset = 0;
+        loop();
+      } else {
+        noLoop();
+        redraw();
+      }
+    });
+  }
+  if (animSpeedRange) {
+    animSpeedRange.addEventListener("input", syncLabels);
   }
 
   const pickTexBtn = document.getElementById("btnPickStripeTexture");
@@ -871,6 +903,9 @@ function drawStripePixel(ctx, x, y, w, h, fillCol) {
 /**
  * Render mode: handcrafted striped block alphabet (A-Z/0-9), edge-striped like reference.
  * Only used when Input=Text and Render mode=Striped block.
+ *
+ * Masks (orangeMask, blackMask) are cached by text+fontScale+canvas size so animation
+ * frames only re-run the fast per-pixel color loop, not the expensive createGraphics calls.
  */
 function drawStripedTextScene(p, ctx) {
   const W = ctx ? ctx.width : width;
@@ -887,7 +922,6 @@ function drawStripedTextScene(p, ctx) {
     background(bgHex);
     noStroke();
   }
-  // Striped mode uses its own texture compositing; avoid stacking generic paper overlay.
 
   const input = (p.text || "").trim().length ? p.text : "HARD";
   const lines = input.split(/\n/).map((l) => l.replace(/\r/g, ""));
@@ -908,32 +942,102 @@ function drawStripedTextScene(p, ctx) {
   const ox = floor((W - drawW) * 0.5);
   const oy = floor((H - drawH) * 0.5);
 
-  const occ = new Uint8Array(textUnitsW * textUnitsH);
-  for (let li = 0; li < lines.length; li++) {
-    const line = lines[li];
-    const lineW = lineWUnits[li];
-    const xBase = floor((textUnitsW - lineW) * 0.5);
-    const yBase = li * STRIPE_ADV_Y;
-    for (let ci = 0; ci < max(1, line.length); ci++) {
-      const ch = line.length ? line[ci] : " ";
-      const g = stripeGlyphFor(ch);
-      const gx = xBase + ci * STRIPE_ADV_X;
-      for (let gy = 0; gy < STRIPE_GLYPH_H; gy++) {
-        const row = g[gy] || ".....";
-        const yy = yBase + gy;
-        if (yy < 0 || yy >= textUnitsH) continue;
-        for (let xx = 0; xx < STRIPE_GLYPH_W; xx++) {
-          if (row[xx] !== "#") continue;
-          const x = gx + xx;
-          if (x < 0 || x >= textUnitsW) continue;
-          occ[yy * textUnitsW + x] = 1;
+  // ── Mask cache: rebuild only when text/layout/canvas changes (not on color or anim frames) ──
+  // Skip caching for exports (ctx != null) to avoid dimension mismatches.
+  const maskCacheKey = ctx ? null : `${p.text}|${p.fontScale}|${W}|${H}`;
+  let cache = null;
+  if (!ctx && _stripeCache && _stripeCache.key === maskCacheKey) {
+    cache = _stripeCache;
+  } else {
+    // Build occupancy grid
+    const occ = new Uint8Array(textUnitsW * textUnitsH);
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li];
+      const lineW = lineWUnits[li];
+      const xBase = floor((textUnitsW - lineW) * 0.5);
+      const yBase = li * STRIPE_ADV_Y;
+      for (let ci = 0; ci < max(1, line.length); ci++) {
+        const ch = line.length ? line[ci] : " ";
+        const g = stripeGlyphFor(ch);
+        const gx = xBase + ci * STRIPE_ADV_X;
+        for (let gy = 0; gy < STRIPE_GLYPH_H; gy++) {
+          const row = g[gy] || ".....";
+          const yy = yBase + gy;
+          if (yy < 0 || yy >= textUnitsH) continue;
+          for (let xx = 0; xx < STRIPE_GLYPH_W; xx++) {
+            if (row[xx] !== "#") continue;
+            const x = gx + xx;
+            if (x < 0 || x >= textUnitsW) continue;
+            occ[yy * textUnitsW + x] = 1;
+          }
         }
       }
     }
+
+    const cellW = block;
+    const darkCoreW = constrain(floor(cellW * 0.52), 1, max(1, cellW - 1));
+
+    // Release old cached graphics before allocating new ones
+    if (_stripeCache) {
+      _stripeCache.orangeMask.remove();
+      _stripeCache.blackMask.remove();
+      _stripeCache.art.remove();
+    }
+
+    const orangeMask = createGraphics(drawW, drawH);
+    const blackMask = createGraphics(drawW, drawH);
+    const artBuf = createGraphics(drawW, drawH);
+    orangeMask.pixelDensity(1);
+    blackMask.pixelDensity(1);
+    artBuf.pixelDensity(1);
+    orangeMask.clear();
+    blackMask.clear();
+    artBuf.clear();
+    orangeMask.noStroke();
+    blackMask.noStroke();
+    orangeMask.fill(255);
+    blackMask.fill(255);
+
+    for (let y = 0; y < textUnitsH; y++) {
+      let x = 0;
+      while (x < textUnitsW) {
+        if (!occ[y * textUnitsW + x]) { x++; continue; }
+        let runStart = x;
+        while (x < textUnitsW && occ[y * textUnitsW + x]) x++;
+        const runEnd = x - 1;
+        for (let rx = runStart; rx <= runEnd; rx++) {
+          const isLeftEdge = rx === runStart;
+          const isRightEdge = rx === runEnd;
+          const lx = rx * block;
+          const ly = y * block;
+          orangeMask.rect(lx, ly, cellW, block);
+          if (isLeftEdge) blackMask.rect(lx, ly, darkCoreW, block);
+          if (isRightEdge) blackMask.rect(lx + cellW - darkCoreW, ly, darkCoreW, block);
+        }
+      }
+    }
+
+    orangeMask.loadPixels();
+    blackMask.loadPixels();
+
+    // Union mask: which pixels belong to any part of the letter shapes.
+    // Used so animation keeps the letter outline fixed while scrolling stripe identity.
+    const letterPixels = new Uint8Array(drawW * drawH);
+    for (let i = 0; i < drawW * drawH; i++) {
+      if (orangeMask.pixels[i * 4 + 3] > 0 || blackMask.pixels[i * 4 + 3] > 0) letterPixels[i] = 1;
+    }
+
+    cache = { key: maskCacheKey, orangeMask, blackMask, letterPixels, art: artBuf, drawW, drawH, ox, oy };
+    if (!ctx) _stripeCache = cache;
   }
 
-  const cellW = block;
-  const darkCoreW = constrain(floor(cellW * 0.52), 1, max(1, cellW - 1));
+  const { orangeMask, blackMask, letterPixels, art: artBuf } = cache;
+  const dW = cache.drawW;
+  const dH = cache.drawH;
+  const dox = cache.ox;
+  const doy = cache.oy;
+
+  // ── Per-frame color render ──
   const seed = p.seed | 0;
   const texImg = stripePrintTexture;
   const texW = texImg && texImg.width > 0 ? texImg.width : 0;
@@ -951,43 +1055,7 @@ function drawStripedTextScene(p, ctx) {
     texCropRw = max(1, min(floor(texCrop.sw), texW - texCropX0));
     texCropRh = max(1, min(floor(texCrop.sh), texH - texCropY0));
   }
-  const orangeMask = createGraphics(drawW, drawH);
-  const blackMask = createGraphics(drawW, drawH);
-  const art = createGraphics(drawW, drawH);
-  orangeMask.pixelDensity(1);
-  blackMask.pixelDensity(1);
-  art.pixelDensity(1);
-  orangeMask.clear();
-  blackMask.clear();
-  art.clear();
-  orangeMask.noStroke();
-  blackMask.noStroke();
-  orangeMask.fill(255);
-  blackMask.fill(255);
 
-  for (let y = 0; y < textUnitsH; y++) {
-    let x = 0;
-    while (x < textUnitsW) {
-      if (!occ[y * textUnitsW + x]) { x++; continue; }
-      let runStart = x;
-      while (x < textUnitsW && occ[y * textUnitsW + x]) x++;
-      let runEnd = x - 1;
-
-      for (let rx = runStart; rx <= runEnd; rx++) {
-        const isLeftEdge = rx === runStart;
-        const isRightEdge = rx === runEnd;
-        const lx = rx * block;
-        const ly = y * block;
-        orangeMask.rect(lx, ly, cellW, block);
-        if (isLeftEdge) blackMask.rect(lx, ly, darkCoreW, block);
-        if (isRightEdge) blackMask.rect(lx + cellW - darkCoreW, ly, darkCoreW, block);
-      }
-    }
-  }
-
-  orangeMask.loadPixels();
-  blackMask.loadPixels();
-  art.loadPixels();
   const pw = paper.levels[0];
   const pg = paper.levels[1];
   const pb = paper.levels[2];
@@ -998,19 +1066,29 @@ function drawStripedTextScene(p, ctx) {
   const dg = dark.levels[1];
   const db = dark.levels[2];
 
-  let texSignedMin = 999;
-  let texSignedMax = -999;
-  let texSignedSum = 0;
-  let texSignedCount = 0;
-  for (let y = 0; y < drawH; y++) {
-    for (let x = 0; x < drawW; x++) {
-      const idx = 4 * (y * drawW + x);
-      const oa = orangeMask.pixels[idx + 3];
-      const ba = blackMask.pixels[idx + 3];
-      if (oa < 1 && ba < 1) continue;
+  // Animation: y-offset to shift which mask row is sampled for stripe identity.
+  // Letter shape (letterPixels) stays fixed; dark/accent assignment scrolls.
+  const animOffset = p.stripeAnimate ? Math.floor(stripeAnimOffset) % dH : 0;
 
-      const wx = ox + x;
-      const wy = oy + y;
+  artBuf.clear();
+  artBuf.loadPixels();
+
+  for (let y = 0; y < dH; y++) {
+    for (let x = 0; x < dW; x++) {
+      if (!letterPixels[y * dW + x]) continue;
+
+      // Sample mask at (x, animY) to determine stripe identity for this pixel
+      const animY = ((y - animOffset) % dH + dH) % dH;
+      const sidx = 4 * (animY * dW + x);
+      const oaRaw = orangeMask.pixels[sidx + 3];
+      const baRaw = blackMask.pixels[sidx + 3];
+      // If wrapped sample lands outside any letter content, default to accent fill
+      const oa = (oaRaw < 1 && baRaw < 1) ? 1 : oaRaw;
+      const ba = baRaw;
+
+      const idx = 4 * (y * dW + x);
+      const wx = dox + x;
+      const wy = doy + y;
       const micro = noise(wx * 0.42 + 11.8, wy * 0.42 + 29.6, seed * 0.071);
       const speck = noise(wx * 0.14 + 61.2, wy * 0.14 + 14.9, seed * 0.021);
       let texL = 0.5;
@@ -1018,18 +1096,10 @@ function drawStripedTextScene(p, ctx) {
         const tx = texCropX0 + ((floor(wx) % texCropRw) + texCropRw) % texCropRw;
         const ty = texCropY0 + ((floor(wy) % texCropRh) + texCropRh) % texCropRh;
         const tidx = 4 * (ty * texW + tx);
-        const tr = texImg.pixels[tidx];
-        const tg = texImg.pixels[tidx + 1];
-        const tb = texImg.pixels[tidx + 2];
-        texL = (0.299 * tr + 0.587 * tg + 0.114 * tb) / 255;
+        texL = (0.299 * texImg.pixels[tidx] + 0.587 * texImg.pixels[tidx + 1] + 0.114 * texImg.pixels[tidx + 2]) / 255;
         if (p.stripeTextureLighten) texL = min(1, texL * 0.72 + 0.28);
       }
-      // Emphasize contrast from texture around its own average luminance.
       const texSigned = (texL - stripePrintTextureMean) * 3.2 * texStrength;
-      if (texSigned < texSignedMin) texSignedMin = texSigned;
-      if (texSigned > texSignedMax) texSignedMax = texSigned;
-      texSignedSum += texSigned;
-      texSignedCount++;
 
       let r;
       let g;
@@ -1069,15 +1139,15 @@ function drawStripedTextScene(p, ctx) {
         b = lerp(b, pb, paperShow);
       }
 
-      art.pixels[idx] = constrain(r, 0, 255);
-      art.pixels[idx + 1] = constrain(g, 0, 255);
-      art.pixels[idx + 2] = constrain(b, 0, 255);
-      art.pixels[idx + 3] = 255;
+      artBuf.pixels[idx] = constrain(r, 0, 255);
+      artBuf.pixels[idx + 1] = constrain(g, 0, 255);
+      artBuf.pixels[idx + 2] = constrain(b, 0, 255);
+      artBuf.pixels[idx + 3] = 255;
     }
   }
-  art.updatePixels();
-  if (ctx) ctx.image(art, ox, oy);
-  else image(art, ox, oy);
+  artBuf.updatePixels();
+  if (ctx) ctx.image(artBuf, dox, doy);
+  else image(artBuf, dox, doy);
 }
 
 function neighborEdge(grid, i, j, cols, rows) {

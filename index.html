@@ -115,6 +115,16 @@
           <input type="color" id="inpMosaicInk" value="#e00000" />
 
           <div class="only-stripe">
+            <label class="check-row" style="margin-top:0">
+              <input type="checkbox" id="inpStripeAnimate" />
+              Animate stripes
+            </label>
+            <p class="field-note">Scrolls the stripe pattern inside each letter. Check to start; uncheck to freeze.</p>
+            <div id="stripeAnimSpeedGroup" hidden>
+              <label>Animation speed <span id="valStripeAnimSpeed"></span></label>
+              <input type="range" id="inpStripeAnimSpeed" min="1" max="20" value="8" step="1" />
+            </div>
+
             <label>Stripe accent color</label>
             <input type="color" id="inpStripeAccent" value="#8a4300" />
             <label>Texture file</label>
