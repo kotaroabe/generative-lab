@@ -93,8 +93,9 @@
               <option value="gothic">Gothic</option>
             </select>
 
-            <label class="not-stripe">Font size (vs auto) <span id="valFontScale"></span>%</label>
-            <input class="not-stripe" type="range" id="inpFontScale" min="20" max="200" value="100" />
+            <label>Size (vs auto-fit) <span id="valFontScale"></span>%</label>
+            <input type="range" id="inpFontScale" min="20" max="300" value="100" step="1" />
+            <p class="field-note only-stripe">Scales the striped block letters; mosaic/offset still use it as font size.</p>
           </div>
 
           <div id="panelInputImage" class="input-panel" role="tabpanel" aria-labelledby="tabInputImage" hidden>

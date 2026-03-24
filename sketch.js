@@ -888,7 +888,7 @@ function sampleInkGrid(
   const display = str.trim().length ? str : " ";
   const lines = display.split(/\n/).map((l) => l.replace(/\r/g, ""));
   const charCount = display.replace(/\n/g, "").length;
-  const fs = constrain(Number(fontScale) || 1, 0.2, 2.5);
+  const fs = constrain(Number(fontScale) || 1, 0.2, 3);
   const pxPerCell = pw / cols;
   const span = pxPerCell * max(cols, rows);
   const sizeGuess = span * (charCount > 4 ? 0.38 : 0.62) * fs;
@@ -994,10 +994,11 @@ function drawStripedTextScene(p, ctx) {
   const textUnitsW = max(1, ...lineWUnits);
   const textUnitsH = max(1, lines.length * STRIPE_ADV_Y - (STRIPE_ADV_Y - STRIPE_GLYPH_H));
 
-  const fs = constrain(Number(p.fontScale) || 1, 0.35, 2.4);
+  const fs = constrain(Number(p.fontScale) || 1, 0.25, 3);
   const fitX = (W * 0.8) / textUnitsW;
   const fitY = (H * 0.58) / textUnitsH;
-  const block = constrain(floor(min(fitX, fitY) * fs), 2, 40);
+  const blockMax = min(160, max(40, floor(min(W, H) * 0.1)));
+  const block = constrain(floor(min(fitX, fitY) * fs), 2, blockMax);
 
   const drawW = textUnitsW * block;
   const drawH = textUnitsH * block;
