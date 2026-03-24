@@ -7,8 +7,19 @@ let inkGrid = null;
 let userImage = null;
 /** Optional print/paper texture asset used in Striped block text rendering. */
 let stripePrintTexture = null;
-/** Stripe animation: running y-offset in pixels (incremented each draw frame). */
+/** Stripe animation: legacy y-offset (kept for reset on toggle, unused in render). */
 let stripeAnimOffset = 0;
+/** Row-unit counter driving the row-by-row slide animation. */
+let stripeRowOffset = 0;
+
+/** Foreground + stripe pairs for Text color preset (striped block text). */
+const TEXT_COLOR_PRESETS = {
+  red: { ink: "#e00000", stripe: "#8a4300" },
+  blue: { ink: "#14008f", stripe: "#7f8fff" },
+  green: { ink: "#1c7f0d", stripe: "#e0bfd0" },
+};
+
+let _applyingTextColorPreset = false;
 /** Cached mask graphics for stripe rendering — rebuilt only when text/layout changes. */
 let _stripeCache = null;
 /** Mean luminance of loaded stripe texture (0..1), used to center contrast. */
@@ -173,7 +184,7 @@ function draw() {
   const p = readParams();
   const isStripeText = p.renderMode === "stripe" && p.inputMode === "text";
   if (isStripeText && p.stripeAnimate) {
-    stripeAnimOffset = (stripeAnimOffset + p.stripeAnimSpeed * 0.5) % 100000;
+    stripeRowOffset += p.stripeAnimSpeed / 60;
   }
   if (p.renderMode === "offset") drawOffsetPrintScene(p, null, null);
   else if (isStripeText) drawStripedTextScene(p, null);
@@ -230,6 +241,30 @@ function readParams() {
   return readParamsForCanvas(width, height);
 }
 
+function applyTextColorPreset(key) {
+  const pair = TEXT_COLOR_PRESETS[key];
+  if (!pair) return;
+  const inkEl = document.getElementById("inpMosaicInk");
+  const stripeEl = document.getElementById("inpStripeAccent");
+  _applyingTextColorPreset = true;
+  try {
+    if (inkEl) inkEl.value = pair.ink;
+    if (stripeEl) stripeEl.value = pair.stripe;
+  } finally {
+    _applyingTextColorPreset = false;
+  }
+}
+
+function syncTextColorPresetUi() {
+  const presetEl = document.getElementById("inpTextColorPreset");
+  const customInk = document.getElementById("customColorGroup");
+  const customStripe = document.getElementById("customStripeAccentGroup");
+  if (!presetEl) return;
+  const isCustom = presetEl.value === "custom";
+  if (customInk) customInk.hidden = !isCustom;
+  if (customStripe) customStripe.hidden = !isCustom;
+}
+
 function syncRenderModeUi() {
   const el = document.getElementById("inpRenderMode");
   const v = (el && el.value) || "mosaic";
@@ -280,6 +315,7 @@ function syncLabels() {
   set("valStripeAnimSpeed", p.stripeAnimSpeed);
   set("valStripeTextureScale", Math.round(p.stripeTextureScale * 100));
   set("valImageScale", Math.round(p.imageScale * 100));
+  syncTextColorPresetUi();
 }
 
 function bindControls() {
@@ -327,9 +363,34 @@ function bindControls() {
       el.addEventListener("change", onScale);
       return;
     }
-    el.addEventListener("input", onChange);
-    el.addEventListener("change", onChange);
+    const handler =
+      id === "inpMosaicInk" || id === "inpStripeAccent"
+        ? () => {
+            if (!_applyingTextColorPreset) {
+              const ps = document.getElementById("inpTextColorPreset");
+              if (ps && ps.value !== "custom") {
+                ps.value = "custom";
+                syncTextColorPresetUi();
+              }
+            }
+            onChange();
+          }
+        : onChange;
+    el.addEventListener("input", handler);
+    el.addEventListener("change", handler);
   });
+
+  const presetEl = document.getElementById("inpTextColorPreset");
+  if (presetEl) {
+    presetEl.addEventListener("change", () => {
+      const v = presetEl.value;
+      if (v !== "custom") applyTextColorPreset(v);
+      syncTextColorPresetUi();
+      syncLabels();
+      regenerate();
+    });
+  }
+  syncTextColorPresetUi();
   const commitCanvasSize = () => {
     const g = (id) => document.getElementById(id);
     g("inpCanvasW").value = String(clampCanvasDim(g("inpCanvasW").value, 4096));
@@ -460,6 +521,7 @@ function bindControls() {
       if (animSpeedGroup) animSpeedGroup.hidden = !on;
       if (on) {
         stripeAnimOffset = 0;
+        stripeRowOffset = 0;
         loop();
       } else {
         noLoop();
@@ -940,7 +1002,7 @@ function drawStripedTextScene(p, ctx) {
   const drawW = textUnitsW * block;
   const drawH = textUnitsH * block;
   const ox = floor((W - drawW) * 0.5);
-  const oy = floor((H - drawH) * 0.5);
+  let oy = floor((H - drawH) * 0.5);
 
   // ── Mask cache: rebuild only when text/layout/canvas changes (not on color or anim frames) ──
   // Skip caching for exports (ctx != null) to avoid dimension mismatches.
@@ -972,6 +1034,22 @@ function drawStripedTextScene(p, ctx) {
           }
         }
       }
+    }
+
+    // Center using tight vertical ink bounds (ignore empty font-box rows above/below glyphs).
+    let minOccY = textUnitsH;
+    let maxOccY = -1;
+    for (let y = 0; y < textUnitsH; y++) {
+      for (let x = 0; x < textUnitsW; x++) {
+        if (!occ[y * textUnitsW + x]) continue;
+        if (y < minOccY) minOccY = y;
+        if (y > maxOccY) maxOccY = y;
+      }
+    }
+    if (maxOccY >= minOccY) {
+      const inkTopPx = minOccY * block;
+      const inkHpx = (maxOccY - minOccY + 1) * block;
+      oy = floor((H - inkHpx) * 0.5) - inkTopPx;
     }
 
     const cellW = block;
@@ -1066,28 +1144,54 @@ function drawStripedTextScene(p, ctx) {
   const dg = dark.levels[1];
   const db = dark.levels[2];
 
-  // Animation: y-offset to shift which mask row is sampled for stripe identity.
-  // Letter shape (letterPixels) stays fixed; dark/accent assignment scrolls.
-  const animOffset = p.stripeAnimate ? Math.floor(stripeAnimOffset) % dH : 0;
+  // Row-by-row slide animation.
+  // Each block-row slides in from the right, staggered top→bottom.
+  // Phases: Reveal → Hold → Hide (bottom→top) → Gap → repeat.
+  const nRows = textUnitsH;
+  const slideX = new Float32Array(nRows); // horizontal offset per block-row (0 = fully in)
+  if (p.stripeAnimate) {
+    const revealDur = 1.5;   // row-units for each row's slide-in
+    const holdDur   = 3.0;   // row-units all rows stay fully visible
+    const holdStart = (nRows - 1) + revealDur; // when last row finishes sliding
+    const holdEnd   = holdStart + holdDur;
+    const totalCycle = holdEnd + nRows + 1.0;  // hide (1 unit/row) + gap (1 unit)
+    const phase = stripeRowOffset % totalCycle;
+    for (let rr = 0; rr < nRows; rr++) {
+      const revealStart = rr;
+      const revealEnd   = rr + revealDur;
+      const hideAt      = holdEnd + (nRows - 1 - rr); // bottom rows hide first
+      if (phase < revealStart || phase >= hideAt) {
+        slideX[rr] = dW;  // off-screen right (hidden)
+      } else if (phase < revealEnd) {
+        const progress = (phase - revealStart) / revealDur;
+        slideX[rr] = Math.round(dW * (1 - progress));
+      } else {
+        slideX[rr] = 0;   // fully visible
+      }
+    }
+  }
+  // When not animating, slideX stays all-zeros → full letter always visible.
 
   artBuf.clear();
   artBuf.loadPixels();
 
   for (let y = 0; y < dH; y++) {
-    for (let x = 0; x < dW; x++) {
-      if (!letterPixels[y * dW + x]) continue;
+    const blockRow = Math.floor(y / block);
+    const rowSX = slideX[blockRow];
+    if (rowSX >= dW) continue;  // entire block-row off-screen, skip
 
-      // Sample mask at (x, animY) to determine stripe identity for this pixel
-      const animY = ((y - animOffset) % dH + dH) % dH;
-      const sidx = 4 * (animY * dW + x);
-      const oaRaw = orangeMask.pixels[sidx + 3];
-      const baRaw = blackMask.pixels[sidx + 3];
-      // If wrapped sample lands outside any letter content, default to accent fill
-      const oa = (oaRaw < 1 && baRaw < 1) ? 1 : oaRaw;
+    for (let x = rowSX; x < dW; x++) {
+      const sx = x - rowSX;  // source x: letter content at sx maps to canvas column x
+      if (!letterPixels[y * dW + sx]) continue;
+
+      const srcIdx = 4 * (y * dW + sx);
+      const baRaw = blackMask.pixels[srcIdx + 3];
+      const oaRaw = orangeMask.pixels[srcIdx + 3];
       const ba = baRaw;
+      const oa = (oaRaw < 1 && baRaw < 1) ? 1 : oaRaw;
 
-      const idx = 4 * (y * dW + x);
-      const wx = dox + x;
+      const dstIdx = 4 * (y * dW + x);
+      const wx = dox + sx;  // noise/texture coords follow source content
       const wy = doy + y;
       const micro = noise(wx * 0.42 + 11.8, wy * 0.42 + 29.6, seed * 0.071);
       const speck = noise(wx * 0.14 + 61.2, wy * 0.14 + 14.9, seed * 0.021);
@@ -1101,48 +1205,48 @@ function drawStripedTextScene(p, ctx) {
       }
       const texSigned = (texL - stripePrintTextureMean) * 3.2 * texStrength;
 
-      let r;
-      let g;
-      let b;
+      let cr;
+      let cg;
+      let cb;
 
       if (ba > 0) {
         const inkLift = max(0, speck - 0.86) * 0.28 * texStrength;
-        r = dr + texSigned * 30;
-        g = dg + texSigned * 30;
-        b = db + texSigned * 30;
+        cr = dr + texSigned * 30;
+        cg = dg + texSigned * 30;
+        cb = db + texSigned * 30;
         const whiteDrop =
           max(0, micro - 0.82) * 0.9 * texStrength +
           max(0, speck - 0.94) * 0.55 * texStrength;
-        r = lerp(r, pw, whiteDrop);
-        g = lerp(g, pg, whiteDrop);
-        b = lerp(b, pb, whiteDrop);
-        r = lerp(r, pw, inkLift);
-        g = lerp(g, pg, inkLift);
-        b = lerp(b, pb, inkLift);
+        cr = lerp(cr, pw, whiteDrop);
+        cg = lerp(cg, pg, whiteDrop);
+        cb = lerp(cb, pb, whiteDrop);
+        cr = lerp(cr, pw, inkLift);
+        cg = lerp(cg, pg, inkLift);
+        cb = lerp(cb, pb, inkLift);
       } else {
         const paperShow = max(0, speck - 0.88) * 0.22 * texStrength;
-        r = ar + texSigned * 36;
-        g = ag + texSigned * 36;
-        b = ab + texSigned * 36;
+        cr = ar + texSigned * 36;
+        cg = ag + texSigned * 36;
+        cb = ab + texSigned * 36;
         const whiteSpeck =
           max(0, micro - 0.79) * 0.52 * texStrength +
           max(0, speck - 0.92) * 0.32 * texStrength;
         const darkSpeck = max(0, 0.13 - micro) * 0.2 * texStrength;
-        r = lerp(r, pw, whiteSpeck);
-        g = lerp(g, pg, whiteSpeck);
-        b = lerp(b, pb, whiteSpeck);
-        r = lerp(r, dr, darkSpeck);
-        g = lerp(g, dg, darkSpeck);
-        b = lerp(b, db, darkSpeck);
-        r = lerp(r, pw, paperShow);
-        g = lerp(g, pg, paperShow);
-        b = lerp(b, pb, paperShow);
+        cr = lerp(cr, pw, whiteSpeck);
+        cg = lerp(cg, pg, whiteSpeck);
+        cb = lerp(cb, pb, whiteSpeck);
+        cr = lerp(cr, dr, darkSpeck);
+        cg = lerp(cg, dg, darkSpeck);
+        cb = lerp(cb, db, darkSpeck);
+        cr = lerp(cr, pw, paperShow);
+        cg = lerp(cg, pg, paperShow);
+        cb = lerp(cb, pb, paperShow);
       }
 
-      artBuf.pixels[idx] = constrain(r, 0, 255);
-      artBuf.pixels[idx + 1] = constrain(g, 0, 255);
-      artBuf.pixels[idx + 2] = constrain(b, 0, 255);
-      artBuf.pixels[idx + 3] = 255;
+      artBuf.pixels[dstIdx]     = constrain(cr, 0, 255);
+      artBuf.pixels[dstIdx + 1] = constrain(cg, 0, 255);
+      artBuf.pixels[dstIdx + 2] = constrain(cb, 0, 255);
+      artBuf.pixels[dstIdx + 3] = 255;
     }
   }
   artBuf.updatePixels();
