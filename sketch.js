@@ -1065,7 +1065,10 @@ function drawStripedTextScene(p, ctx) {
 
     const orangeMask = createGraphics(drawW, drawH);
     const blackMask = createGraphics(drawW, drawH);
-    const artBuf = createGraphics(drawW, drawH);
+    // Live animation: full canvas width so rows can slide all the way to the canvas edges.
+    // Export (ctx != null) uses the narrow bounding-box width — no canvas-edge slide needed.
+    const artBufW = ctx ? drawW : W;
+    const artBuf = createGraphics(artBufW, drawH);
     orangeMask.pixelDensity(1);
     blackMask.pixelDensity(1);
     artBuf.pixelDensity(1);
@@ -1106,15 +1109,17 @@ function drawStripedTextScene(p, ctx) {
       if (orangeMask.pixels[i * 4 + 3] > 0 || blackMask.pixels[i * 4 + 3] > 0) letterPixels[i] = 1;
     }
 
-    cache = { key: maskCacheKey, orangeMask, blackMask, letterPixels, art: artBuf, drawW, drawH, ox, oy };
+    cache = { key: maskCacheKey, orangeMask, blackMask, letterPixels, art: artBuf, artBufW, drawW, drawH, ox, oy, canvasW: W };
     if (!ctx) _stripeCache = cache;
   }
 
   const { orangeMask, blackMask, letterPixels, art: artBuf } = cache;
-  const dW = cache.drawW;
-  const dH = cache.drawH;
-  const dox = cache.ox;
-  const doy = cache.oy;
+  const dW     = cache.drawW;
+  const dH     = cache.drawH;
+  const dox    = cache.ox;
+  const doy    = cache.oy;
+  const aBufW  = cache.artBufW;   // width of artBuf (W for live, drawW for export)
+  const cW     = cache.canvasW;   // full canvas width (for slide extents)
 
   // ── Per-frame color render ──
   const seed = p.seed | 0;
@@ -1146,43 +1151,101 @@ function drawStripedTextScene(p, ctx) {
   const db = dark.levels[2];
 
   // Row-by-row slide animation.
-  // Each block-row slides in from the right, staggered top→bottom.
-  // Phases: Reveal → Hold → Hide (bottom→top) → Gap → repeat.
+  // Reveal: rows enter from the right CANVAS edge, staggered top→bottom with overlapping timing.
+  // Exit:   rows leave to the left CANVAS edge, staggered bottom→top.
+  // Phases per row: hidden → slide-in → hold → slide-out → hidden → (gap) → repeat.
   const nRows = textUnitsH;
-  const slideX = new Float32Array(nRows); // horizontal offset per block-row (0 = fully in)
+  // slideIn[r]:  pixels the row is shifted right of its resting position (0 = in place).
+  // slideOut[r]: pixels the row is shifted left of its resting position (0 = in place).
+  const slideIn  = new Float32Array(nRows);
+  const slideOut = new Float32Array(nRows);
+  const rowHidden = new Uint8Array(nRows);
+
+  // Maximum travel distances so rows enter/exit at the actual canvas edges.
+  // For live: cW === W (full canvas), aBufW === W.  For export: cW === dW, aBufW === dW.
+  const slideInMax  = cW - dox;       // right canvas edge to resting left edge
+  const slideOutMax = dox + dW;       // resting left edge to left canvas edge
+
   if (p.stripeAnimate) {
-    const revealDur = 1.5;   // row-units for each row's slide-in
-    const holdDur   = 3.0;   // row-units all rows stay fully visible
-    const holdStart = (nRows - 1) + revealDur; // when last row finishes sliding
-    const holdEnd   = holdStart + holdDur;
-    const totalCycle = holdEnd + nRows + 1.0;  // hide (1 unit/row) + gap (1 unit)
+    const revealStagger = 0.4;  // row-units between each row's reveal start (< revealDur → overlap)
+    const revealDur     = 1.2;  // row-units for one row's slide-in
+    const holdDur       = 3.0;  // row-units all rows stay fully visible
+    const exitStagger   = 0.4;  // row-units between each row's exit start
+    const exitDur       = 1.0;  // row-units for one row's slide-out
+    const gap           = 1.0;  // row-units of blank canvas between cycles
+
+    const holdStart  = (nRows - 1) * revealStagger + revealDur;
+    const holdEnd    = holdStart + holdDur;
+    const totalCycle = holdEnd + (nRows - 1) * exitStagger + exitDur + gap;
+
     const phase = stripeRowOffset % totalCycle;
+
     for (let rr = 0; rr < nRows; rr++) {
-      const revealStart = rr;
-      const revealEnd   = rr + revealDur;
-      const hideAt      = holdEnd + (nRows - 1 - rr); // bottom rows hide first
-      if (phase < revealStart || phase >= hideAt) {
-        slideX[rr] = dW;  // off-screen right (hidden)
+      const revealStart = rr * revealStagger;
+      const revealEnd   = revealStart + revealDur;
+      const exitStart   = holdEnd + (nRows - 1 - rr) * exitStagger;
+      const exitEnd     = exitStart + exitDur;
+
+      if (phase < revealStart || phase >= exitEnd) {
+        rowHidden[rr] = 1;
+        slideIn[rr]   = 0;
+        slideOut[rr]  = 0;
       } else if (phase < revealEnd) {
-        const progress = (phase - revealStart) / revealDur;
-        slideX[rr] = Math.round(dW * (1 - progress));
+        rowHidden[rr] = 0;
+        const t = (phase - revealStart) / revealDur;
+        const eased = t < 0.5
+          ? 2 * t * t
+          : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOutQuad
+        slideIn[rr]  = Math.round(slideInMax * (1 - eased));
+        slideOut[rr] = 0;
+      } else if (phase < exitStart) {
+        rowHidden[rr] = 0;
+        slideIn[rr]   = 0;
+        slideOut[rr]  = 0;
       } else {
-        slideX[rr] = 0;   // fully visible
+        rowHidden[rr] = 0;
+        const t = (phase - exitStart) / exitDur;
+        const eased = t < 0.5
+          ? 2 * t * t
+          : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOutQuad
+        slideOut[rr] = Math.round(slideOutMax * eased);
+        slideIn[rr]  = 0;
       }
     }
   }
-  // When not animating, slideX stays all-zeros → full letter always visible.
+  // When not animating all offsets stay zero → full letter always visible.
 
   artBuf.clear();
   artBuf.loadPixels();
 
   for (let y = 0; y < dH; y++) {
-    const blockRow = Math.floor(y / block);
-    const rowSX = slideX[blockRow];
-    if (rowSX >= dW) continue;  // entire block-row off-screen, skip
+    const blockRow    = Math.floor(y / block);
+    if (rowHidden[blockRow]) continue;
 
-    for (let x = rowSX; x < dW; x++) {
-      const sx = x - rowSX;  // source x: letter content at sx maps to canvas column x
+    const rowSlideIn  = slideIn[blockRow];
+    const rowSlideOut = slideOut[blockRow];
+    const isExiting   = rowSlideOut > 0;
+
+    // For REVEAL: content rests at [dox .. dox+dW) in artBuf.
+    //   Shifted right by rowSlideIn → visible in [dox+rowSlideIn .. dox+dW+rowSlideIn),
+    //   but we only write within the artBuf width [0 .. aBufW).
+    //   sx = x - dox - rowSlideIn + dox = x - rowSlideIn  (source in narrow mask space [0,dW))
+    // For EXIT: content shifts left by rowSlideOut pixels from resting position.
+    //   Visible in [dox-rowSlideOut .. dox+dW-rowSlideOut), clamped to [0, aBufW).
+    //   sx = x - (dox - rowSlideOut) = x - dox + rowSlideOut
+
+    let xStart, xEnd;
+    if (isExiting) {
+      xStart = max(0, dox - rowSlideOut);
+      xEnd   = max(0, dox + dW - rowSlideOut);
+    } else {
+      xStart = max(0, dox + rowSlideIn);
+      xEnd   = min(aBufW, dox + dW + rowSlideIn);
+    }
+
+    for (let x = xStart; x < xEnd; x++) {
+      const sx = isExiting ? (x - dox + rowSlideOut) : (x - dox - rowSlideIn);
+      if (sx < 0 || sx >= dW) continue;
       if (!letterPixels[y * dW + sx]) continue;
 
       const srcIdx = 4 * (y * dW + sx);
@@ -1191,7 +1254,7 @@ function drawStripedTextScene(p, ctx) {
       const ba = baRaw;
       const oa = (oaRaw < 1 && baRaw < 1) ? 1 : oaRaw;
 
-      const dstIdx = 4 * (y * dW + x);
+      const dstIdx = 4 * (y * aBufW + x);
       const wx = dox + sx;  // noise/texture coords follow source content
       const wy = doy + y;
       const micro = noise(wx * 0.42 + 11.8, wy * 0.42 + 29.6, seed * 0.071);
@@ -1251,8 +1314,10 @@ function drawStripedTextScene(p, ctx) {
     }
   }
   artBuf.updatePixels();
-  if (ctx) ctx.image(artBuf, dox, doy);
-  else image(artBuf, dox, doy);
+  // Export uses narrow artBuf placed at (dox, doy); live uses full-width artBuf at (0, doy).
+  const drawOffX = ctx ? dox : 0;
+  if (ctx) ctx.image(artBuf, drawOffX, doy);
+  else image(artBuf, drawOffX, doy);
 }
 
 function neighborEdge(grid, i, j, cols, rows) {
